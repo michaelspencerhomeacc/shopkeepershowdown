@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
-import type { Location, RepType, Player, ResourceCard } from '../types'
+import type { Location, RepType, Player, ResourceCard, ResourceType } from '../types'
 import { useGameStore } from '../store/gameStore'
 import { Keyword } from './Keyword'
+import { ResourceCardMini } from './ResourceCardMini'
+import { parseRequirements, meetsRequirements, type Requirements } from '../utils/requirements'
 
 interface Props {
   location: Location
@@ -116,6 +118,34 @@ function DrawnCardsToast() {
         </div>
       </div>
     </>
+  )
+}
+
+// ---- Requirement progress bar ----
+
+function RequirementBar({ req, selected }: { req: Requirements; selected: ResourceCard[] }) {
+  const counts: Record<string, number> = { ARM: 0, CON: 0, TRI: 0, TRG: 0 }
+  for (const c of selected) counts[c.type] = (counts[c.type] ?? 0) + 1
+  const entries = (Object.entries(req) as [ResourceType, number][]).filter(([, n]) => n > 0)
+  return (
+    <div className="flex gap-1.5 flex-wrap">
+      {entries.map(([type, need]) => {
+        const have = counts[type] ?? 0
+        const met = have >= need
+        return (
+          <span
+            key={type}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors ${
+              met
+                ? 'bg-green-900/40 border-green-500/60 text-green-300'
+                : 'bg-red-900/30 border-red-500/40 text-red-300'
+            }`}
+          >
+            {type}: {have}/{need}
+          </span>
+        )
+      })}
+    </div>
   )
 }
 
@@ -494,20 +524,18 @@ function AppraisePeekUI({ player, onDone }: { player: Player; onDone: () => void
   return (
     <div className="space-y-1.5 text-[10px]">
       <div className="text-parchment-400">Select up to 3 to keep (return the rest):</div>
-      <div className="flex flex-wrap gap-1.5">
-        {appraisePeek!.cards.map(c => {
-          const sel = selected.includes(c.id)
-          return (
-            <button
-              key={c.id}
-              onClick={() => setSelected(prev => prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 3 ? [...prev, c.id] : prev)}
-              className={`flex flex-col items-start px-2 py-1 rounded border text-left transition-colors ${sel ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'}`}
-            >
-              <span className="font-semibold">{c.name}</span>
-              <span className="opacity-70">{c.type} · ${c.value}{c.repTokens > 0 ? ` · ★${c.repTokens} rep` : ''}</span>
-            </button>
-          )
-        })}
+      <div className="flex flex-wrap gap-2">
+        {appraisePeek!.cards.map(c => (
+          <ResourceCardMini
+            key={c.id}
+            card={c}
+            size="md"
+            selected={selected.includes(c.id)}
+            onClick={() => setSelected(prev =>
+              prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 3 ? [...prev, c.id] : prev
+            )}
+          />
+        ))}
       </div>
       <button
         onClick={() => { completeAppraise(player.id, selected); setSelected([]); onDone() }}
@@ -699,28 +727,21 @@ function WildernessActions() {
         {top4.length === 0 ? (
           <div className="text-xs text-parchment-600 italic">Resource discard is empty</div>
         ) : (
-          <div className="space-y-1">
-            <div className="text-[10px] text-parchment-500">Select up to 2 cards to keep:</div>
-            <div className="flex flex-wrap gap-1">
+          <div className="space-y-2">
+            <div className="text-[10px] text-parchment-500">Top 4 of discard — select up to 2 to keep:</div>
+            <div className="flex flex-wrap gap-2">
               {top4.map(c => (
-                <button
+                <ResourceCardMini
                   key={c.id}
+                  card={c}
+                  size="md"
+                  selected={selectedForage.includes(c.id)}
                   onClick={() => toggleForage(c.id)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                    selectedForage.includes(c.id)
-                      ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'
-                  }`}
-                >
-                  {c.name} ({c.type})
-                </button>
+                />
               ))}
             </div>
             <button
-              onClick={() => {
-                forage(player.id, selectedForage)
-                setSelectedForage([])
-              }}
+              onClick={() => { forage(player.id, selectedForage); setSelectedForage([]) }}
               className="btn-primary text-xs px-2 py-0.5"
             >
               Keep {selectedForage.length} card(s)
@@ -942,45 +963,70 @@ function WorkshopActions() {
       <ActionBlock>
         <SectionTitle>2. Craft</SectionTitle>
         {!player.workOrder && !pendingWorkOrders && (
-          <button
-            onClick={() => drawWorkOrders(player.id)}
-            className="btn-secondary text-xs px-2 py-0.5"
-          >
+          <button onClick={() => drawWorkOrders(player.id)} className="btn-secondary text-xs px-2 py-0.5">
             Draw Work Orders
           </button>
         )}
         {pendingWorkOrders && (
-          <div className="text-xs text-parchment-400 italic">
-            Choose your Work Order in the player area below.
-          </div>
+          <div className="text-xs text-parchment-400 italic">Choose your Work Order in the player area below.</div>
         )}
         {player.workOrder && (
-          <div className="space-y-1">
-            <div>
-              <div className="text-xs font-semibold text-parchment-200">{player.workOrder.name}</div>
-              <div className="text-[10px] text-parchment-400">Recipe: {player.workOrder.recipe}</div>
-              <div className="text-[10px] text-gold-400">Reward: ${player.workOrder.price}</div>
-            </div>
-            <button
-              onClick={() => completeCraft(player.id)}
-              className="btn-primary text-xs px-2 py-0.5"
-            >
-              Complete Craft → +${player.workOrder.price}
-            </button>
-          </div>
+          <CraftCardPicker player={player} onDone={() => {}} />
         )}
       </ActionBlock>
 
       <ActionBlock>
         <SectionTitle>3. <Keyword name="Appraise" /> 4</SectionTitle>
-        <button
-          onClick={() => appraise(player.id, 4)}
-          className="btn-primary text-xs px-2 py-0.5"
-        >
+        <button onClick={() => appraise(player.id, 4)} className="btn-primary text-xs px-2 py-0.5">
           Draw 4 to Hoard
         </button>
       </ActionBlock>
     </>
+  )
+}
+
+function CraftCardPicker({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { completeCraft } = useGameStore()
+  const wo = player.workOrder!
+  const req = parseRequirements(wo.recipe)
+  const [selected, setSelected] = useState<string[]>([])
+
+  const selectedCards = selected.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
+  const canCraft = meetsRequirements(selectedCards, req)
+
+  function toggle(id: string) {
+    setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  return (
+    <div className="space-y-2 text-[10px]">
+      <div>
+        <span className="text-parchment-200 font-semibold">{wo.name}</span>
+        <span className="text-gold-400 ml-2">+${wo.price}</span>
+      </div>
+      <div className="text-parchment-500">Recipe: {wo.recipe}</div>
+      <RequirementBar req={req} selected={selectedCards} />
+      <div className="text-parchment-500 mt-1">Select cards from hoard to spend:</div>
+      <div className="flex flex-wrap gap-2">
+        {player.hoard.map(c => (
+          <ResourceCardMini
+            key={c.id}
+            card={c}
+            size="sm"
+            selected={selected.includes(c.id)}
+            onClick={() => toggle(c.id)}
+          />
+        ))}
+        {player.hoard.length === 0 && <span className="text-parchment-600 italic">Hoard is empty</span>}
+      </div>
+      <button
+        onClick={() => { completeCraft(player.id, selected); setSelected([]); onDone() }}
+        disabled={!canCraft}
+        className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        Craft → +${wo.price}
+      </button>
+    </div>
   )
 }
 

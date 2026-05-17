@@ -137,7 +137,7 @@ interface GameStore extends GameState {
   movePawn: (playerId: string, location: Location | null) => void
 
   // Visitor
-  claimVisitor: (playerId: string, visitorIdx: number) => void
+  claimVisitor: (playerId: string, visitorIdx: number, cardIds: string[]) => void
   refillVisitors: () => void
 
   // Dice
@@ -163,7 +163,7 @@ interface GameStore extends GameState {
   hireBodyguard: (playerId: string) => void
   repairAllWindows: (playerId: string) => void
   reportCrimeB: (byPlayerId: string, targetPlayerId: string, stolenCardId: string, repType: RepType) => void
-  completeCraft: (playerId: string) => void
+  completeCraft: (playerId: string, cardIds: string[]) => void
   pitchCamp: (playerId: string) => void
   peekTownCrier: (playerId: string) => void
   completeTownCrier: (playerId: string, placeCardId: string, replaceSlotIdx: number) => void
@@ -503,17 +503,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }))
   },
 
-  claimVisitor(playerId, visitorIdx) {
+  claimVisitor(playerId, visitorIdx, cardIds) {
     const { activeVisitors, visitorDiscard, players } = get()
     const visitor = activeVisitors[visitorIdx]
     if (!visitor) return
     const player = players.find(p => p.id === playerId)
     if (!player) return
 
+    // Pull spent cards from hoard
+    const spentCards = cardIds.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
+    // Rep gained = 1 per card sold, by type (matches demand)
+    const repGains: Partial<Record<string, number>> = {}
+    for (const c of spentCards) repGains[c.type] = (repGains[c.type] ?? 0) + 1
+    const coinsGained = spentCards.reduce((sum, c) => sum + c.value, 0)
+
     set(s => ({
       activeVisitors: s.activeVisitors.map((v, i) => i === visitorIdx ? null : v),
       visitorDiscard: [visitor, ...visitorDiscard],
-      actionLog: [logEntry(`${player.name} sold to ${visitor.name}.`, playerId), ...s.actionLog.slice(0, 49)],
+      resourceDiscard: [...spentCards, ...s.resourceDiscard],
+      players: s.players.map(p => {
+        if (p.id !== playerId) return p
+        const newRep = { ...p.rep }
+        for (const [t, n] of Object.entries(repGains)) newRep[t as RepType] = (newRep[t as RepType] ?? 0) + n
+        return {
+          ...p,
+          hoard: p.hoard.filter(c => !cardIds.includes(c.id)),
+          stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIds.includes(id)),
+          coins: p.coins + coinsGained,
+          rep: newRep,
+        }
+      }),
+      actionLog: [logEntry(`${player.name} sold to ${visitor.name} — gained ${coinsGained} coins + rep.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -979,20 +999,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }))
   },
 
-  completeCraft(playerId) {
+  completeCraft(playerId, cardIds) {
     const { players } = get()
     const player = players.find(p => p.id === playerId)
     if (!player || !player.workOrder) return
 
+    const spentCards = cardIds.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
     const gained = player.workOrder.price
 
     set(s => ({
+      resourceDiscard: [...spentCards, ...s.resourceDiscard],
       players: s.players.map(p =>
         p.id === playerId
-          ? { ...p, workOrder: null, coins: p.coins + gained }
+          ? {
+              ...p,
+              workOrder: null,
+              coins: p.coins + gained,
+              hoard: p.hoard.filter(c => !cardIds.includes(c.id)),
+              stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIds.includes(id)),
+            }
           : p
       ),
-      actionLog: [logEntry(`${player.name} completed Work Order "${player.workOrder!.name}" — gained ${gained} coins.`, playerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${player.name} completed Work Order "${player.workOrder!.name}" — spent ${spentCards.length} cards, gained ${gained} coins.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
