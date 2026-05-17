@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import type { Location, RepType, Player } from '../types'
+import { useState, useEffect } from 'react'
+import type { Location, RepType, Player, ResourceCard } from '../types'
 import { useGameStore } from '../store/gameStore'
 import { Keyword } from './Keyword'
 
@@ -27,30 +27,95 @@ export function LocationActionPanel({ location, onClose }: Props) {
   if (!player) return null
 
   return (
-    <div className="panel p-3 mt-1 border-t-2 border-gold-400/30">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-display font-semibold text-gold-300 text-sm">
-          {LOCATION_LABELS[location]} — Actions
-        </h3>
-        <button
-          onClick={onClose}
-          className="text-parchment-500 hover:text-parchment-200 text-base leading-none"
-          title="Close"
-        >
-          ×
-        </button>
-      </div>
+    <>
+      <DrawnCardsToast />
+      <div className="panel p-3 mt-1 border-t-2 border-gold-400/30">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-display font-semibold text-gold-300 text-sm">
+            {LOCATION_LABELS[location]} — Actions
+          </h3>
+          <button
+            onClick={onClose}
+            className="text-parchment-500 hover:text-parchment-200 text-base leading-none"
+            title="Close"
+          >
+            ×
+          </button>
+        </div>
 
-      <div className="space-y-3">
-        {location === 'guildhall' && <GuildhallActions />}
-        {location === 'tavern' && <TavernActions />}
-        {location === 'wilderness' && <WildernessActions />}
-        {location === 'barracks' && <BarracksActions />}
-        {location === 'workshop' && <WorkshopActions />}
-        {location === 'thieves-guild' && <ThievesGuildActions />}
+        <div className="space-y-3">
+          {location === 'guildhall' && <GuildhallActions />}
+          {location === 'tavern' && <TavernActions />}
+          {location === 'wilderness' && <WildernessActions />}
+          {location === 'barracks' && <BarracksActions />}
+          {location === 'workshop' && <WorkshopActions />}
+          {location === 'thieves-guild' && <ThievesGuildActions />}
+        </div>
       </div>
-    </div>
+    </>
+  )
+}
+
+// ---- Draw animation toast ----
+
+const TYPE_COLORS: Record<string, string> = {
+  ARM: 'bg-red-900/70 border-red-500/50 text-red-200',
+  CON: 'bg-green-900/70 border-green-500/50 text-green-200',
+  TRI: 'bg-blue-900/70 border-blue-500/50 text-blue-200',
+  TRG: 'bg-purple-900/70 border-purple-500/50 text-purple-200',
+}
+
+function DrawnCardsToast() {
+  const { lastDrawnCards, clearDrawnCards } = useGameStore()
+  const [cards, setCards] = useState<ResourceCard[]>([])
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    if (!lastDrawnCards || lastDrawnCards.length === 0) return
+    setCards(lastDrawnCards)
+    setVisible(true)
+    const fadeTimer = setTimeout(() => setVisible(false), 2500)
+    const clearTimer = setTimeout(() => { clearDrawnCards(); setCards([]) }, 2800)
+    return () => { clearTimeout(fadeTimer); clearTimeout(clearTimer) }
+  }, [lastDrawnCards])
+
+  if (cards.length === 0) return null
+
+  return (
+    <>
+      <style>{`
+        @keyframes card-pop {
+          from { opacity: 0; transform: translateY(10px) scale(0.82); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+      `}</style>
+      <div
+        className={`fixed inset-0 z-[200] pointer-events-none flex items-center justify-center transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <div className="bg-ink-900/95 border border-gold-400/60 rounded-xl px-5 py-4 shadow-2xl max-w-xs w-full mx-4">
+          <div className="text-[10px] uppercase tracking-widest text-gold-400 font-semibold text-center mb-3">
+            Cards Drawn
+          </div>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {cards.map((c, i) => (
+              <div
+                key={c.id}
+                className={`flex flex-col items-center rounded-lg border px-2 py-1.5 min-w-[54px] ${TYPE_COLORS[c.type] ?? 'bg-ink-700 border-parchment-700/40 text-parchment-200'}`}
+                style={{ animation: `card-pop 0.22s ease-out ${i * 90}ms both` }}
+              >
+                <span className="text-[9px] font-bold opacity-70 uppercase tracking-wide">{c.type}</span>
+                <span className="text-[10px] font-semibold text-center leading-tight mt-0.5">{c.name}</span>
+                <span className="text-[9px] opacity-60 mt-0.5">${c.value}</span>
+                {c.repTokens > 0 && (
+                  <span className="text-[9px] text-gold-300 mt-0.5">★ {c.repTokens}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
   )
 }
 
@@ -429,16 +494,20 @@ function AppraisePeekUI({ player, onDone }: { player: Player; onDone: () => void
   return (
     <div className="space-y-1.5 text-[10px]">
       <div className="text-parchment-400">Select up to 3 to keep (return the rest):</div>
-      <div className="flex flex-wrap gap-1">
-        {appraisePeek!.cards.map(c => (
-          <button
-            key={c.id}
-            onClick={() => setSelected(prev => prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 3 ? [...prev, c.id] : prev)}
-            className={`px-1.5 py-0.5 rounded border ${selected.includes(c.id) ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
-          >
-            {c.name} ({c.type} ${c.value})
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-1.5">
+        {appraisePeek!.cards.map(c => {
+          const sel = selected.includes(c.id)
+          return (
+            <button
+              key={c.id}
+              onClick={() => setSelected(prev => prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 3 ? [...prev, c.id] : prev)}
+              className={`flex flex-col items-start px-2 py-1 rounded border text-left transition-colors ${sel ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'}`}
+            >
+              <span className="font-semibold">{c.name}</span>
+              <span className="opacity-70">{c.type} · ${c.value}{c.repTokens > 0 ? ` · ★${c.repTokens} rep` : ''}</span>
+            </button>
+          )
+        })}
       </div>
       <button
         onClick={() => { completeAppraise(player.id, selected); setSelected([]); onDone() }}

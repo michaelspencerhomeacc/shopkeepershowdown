@@ -181,6 +181,7 @@ interface GameStore extends GameState {
   bountyHunterCoins: (byPlayerId: string, fromPlayerId: string) => void
   bountyHunterResource: (byPlayerId: string, fromPlayerId: string, cardId: string) => void
   distribute: (byPlayerId: string, fleaSlotIdx: number) => void
+  clearDrawnCards: () => void
 }
 
 const INITIAL: GameState = {
@@ -201,6 +202,7 @@ const INITIAL: GameState = {
   diceResult: null,
   townCrierPeek: null,
   appraisePeek: null,
+  lastDrawnCards: null,
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -597,15 +599,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players.find(p => p.id === playerId)
     if (!player) return
     const roll = Math.ceil(Math.random() * 6)
-    let drawn = 0
-    for (let i = 0; i < roll; i++) {
-      if (player.hoard.length + drawn >= 8) break
-      get().drawResource(playerId, true)
-      drawn++
+
+    let { resourceDeck, resourceDiscard } = get()
+    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
+    const drawn: ResourceCard[] = []
+    for (let i = 0; i < roll && player.hoard.length + drawn.length < 8 && deck.length > 0; i++) {
+      const [card, ...rest] = deck
+      drawn.push(card)
+      deck = rest
     }
+
     set(s => ({
+      resourceDeck: deck,
       diceResult: roll,
-      actionLog: [logEntry(`${player.name} gathered — rolled ${roll}, drew ${drawn} resources.`, playerId), ...s.actionLog.slice(0, 49)],
+      lastDrawnCards: drawn,
+      players: s.players.map(p =>
+        p.id === playerId ? { ...p, hoard: [...p.hoard, ...drawn] } : p
+      ),
+      actionLog: [logEntry(`${player.name} gathered — rolled ${roll}, drew ${drawn.length} resources.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -692,14 +703,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { players } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
-    let drawn = 0
-    for (let i = 0; i < count; i++) {
-      if (player.hoard.length + drawn >= 8) break
-      get().drawResource(playerId, true)
-      drawn++
+
+    let { resourceDeck, resourceDiscard } = get()
+    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
+    const drawn: ResourceCard[] = []
+    for (let i = 0; i < count && player.hoard.length + drawn.length < 8 && deck.length > 0; i++) {
+      const [card, ...rest] = deck
+      drawn.push(card)
+      deck = rest
     }
+
     set(s => ({
-      actionLog: [logEntry(`${player.name} appraised — drew ${drawn} card(s) to hoard.`, playerId), ...s.actionLog.slice(0, 49)],
+      resourceDeck: deck,
+      lastDrawnCards: drawn,
+      players: s.players.map(p =>
+        p.id === playerId ? { ...p, hoard: [...p.hoard, ...drawn] } : p
+      ),
+      actionLog: [logEntry(`${player.name} appraised — drew ${drawn.length} card(s) to hoard.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -857,6 +877,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set(s => ({
       resourceDeck: deck,
+      lastDrawnCards: drawn,
       players: s.players.map(p =>
         p.id === playerId
           ? {
@@ -1094,13 +1115,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set(s => ({
       resourceDeck: deck,
+      diceResult: roll,
+      lastDrawnCards: drawn,
       players: s.players.map(p => {
         if (p.id !== playerId) return p
         const rep = { ...p.rep }
         distinctTypes.forEach(t => { rep[t] = rep[t] + 1 })
         return { ...p, hoard: [...p.hoard, ...drawn], rep }
       }),
-      diceResult: roll,
       actionLog: [logEntry(`${player.name} used Marvellous Mascot — rolled ${roll}, drew ${drawn.length} card(s), gained rep: ${distinctTypes.join(', ') || 'none'}.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
@@ -1125,6 +1147,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
     set(s => ({
       resourceDeck: deck,
+      lastDrawnCards: drawn,
       players: s.players.map(p =>
         p.id === playerId
           ? { ...p, hoard: [...p.hoard, ...drawn].slice(0, 8), stolenHoardCardIds: [...p.stolenHoardCardIds, ...drawn.map(c => c.id)] }
@@ -1169,6 +1192,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const foundRep = drawn.length > 0 && drawn[drawn.length - 1].repTokens > 0
     set(s => ({
       resourceDeck: deck,
+      lastDrawnCards: drawn,
       players: s.players.map(p =>
         p.id === playerId ? { ...p, hoard: [...p.hoard, ...drawn].slice(0, 8) } : p
       ),
@@ -1193,6 +1217,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set(s => ({
       resourceDeck: [...returned, ...s.resourceDeck.slice(appraisePeek.cards.length)],
       appraisePeek: null,
+      lastDrawnCards: kept,
       players: s.players.map(p =>
         p.id === playerId ? { ...p, hoard: [...p.hoard, ...kept].slice(0, 8) } : p
       ),
@@ -1247,5 +1272,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ),
       actionLog: [logEntry(`${player.name} distributed ${card.name} (${card.type}) to a Visitor — gained 1 ${card.type} rep.`, byPlayerId), ...s.actionLog.slice(0, 49)],
     }))
+  },
+
+  clearDrawnCards() {
+    set({ lastDrawnCards: null })
   },
 }))
