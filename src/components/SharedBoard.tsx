@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { useGameStore } from '../store/gameStore'
 import type { Location } from '../types'
+import { LocationActionPanel } from './LocationActionPanel'
 
 const LOCATIONS: { id: Location; label: string }[] = [
   { id: 'guildhall',     label: 'Guildhall' },
@@ -15,6 +17,7 @@ const PAWN_BORDERS = ['border-red-300','border-blue-300','border-green-300','bor
 
 export function SharedBoard() {
   const { players, pawns, movePawn } = useGameStore()
+  const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
 
   function playerIdx(playerId: string) {
     return players.findIndex(p => p.id === playerId)
@@ -23,6 +26,10 @@ export function SharedBoard() {
   function togglePawn(playerId: string, loc: Location) {
     const here = pawns.some(pw => pw.playerId === playerId && pw.location === loc)
     movePawn(playerId, here ? null : loc)
+  }
+
+  function handleZoneClick(locId: Location) {
+    setSelectedLocation(prev => prev === locId ? null : locId)
   }
 
   return (
@@ -41,9 +48,16 @@ export function SharedBoard() {
           {LOCATIONS.map(loc => {
             const pawnsHere = pawns.filter(pw => pw.location === loc.id)
             const absent = players.filter(p => !pawns.some(pw => pw.playerId === p.id && pw.location === loc.id))
+            const isSelected = selectedLocation === loc.id
 
             return (
-              <div key={loc.id} className="relative flex flex-col justify-between p-2">
+              <div
+                key={loc.id}
+                className={`relative flex flex-col justify-between p-2 cursor-pointer transition-all rounded-lg
+                  ${isSelected ? 'ring-2 ring-gold-400/60 bg-gold-400/5' : 'hover:bg-white/5'}`}
+                onClick={() => handleZoneClick(loc.id)}
+                title={`Click to open ${loc.label} actions`}
+              >
                 {/* Pawns currently here — top-right cluster */}
                 <div className="flex flex-wrap gap-1 justify-end">
                   {pawnsHere.map(pw => {
@@ -52,7 +66,7 @@ export function SharedBoard() {
                     return (
                       <button
                         key={pw.playerId}
-                        onClick={() => movePawn(pw.playerId, null)}
+                        onClick={e => { e.stopPropagation(); movePawn(pw.playerId, null) }}
                         className={`
                           w-8 h-8 rounded-full ${PAWN_COLORS[idx % PAWN_COLORS.length]}
                           border-2 ${PAWN_BORDERS[idx % PAWN_BORDERS.length]}
@@ -76,7 +90,7 @@ export function SharedBoard() {
                       return (
                         <button
                           key={player.id}
-                          onClick={() => togglePawn(player.id, loc.id)}
+                          onClick={e => { e.stopPropagation(); togglePawn(player.id, loc.id) }}
                           className={`
                             text-[10px] font-bold px-1.5 py-0.5 rounded-full
                             ${PAWN_COLORS[idx % PAWN_COLORS.length]}
@@ -96,6 +110,21 @@ export function SharedBoard() {
           })}
         </div>
       </div>
+
+      {/* Hint when no location is selected */}
+      {!selectedLocation && (
+        <div className="text-center text-xs text-parchment-600 mt-1 italic">
+          Click a location to take actions
+        </div>
+      )}
+
+      {/* Location action panel */}
+      {selectedLocation && (
+        <LocationActionPanel
+          location={selectedLocation}
+          onClose={() => setSelectedLocation(null)}
+        />
+      )}
     </div>
   )
 }

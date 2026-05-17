@@ -189,6 +189,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
                 key={card.id}
                 card={card}
                 size="sm"
+                stolen={player.stolenHoardCardIds.includes(card.id)}
                 actions={
                   <div className="flex gap-1">
                     <button

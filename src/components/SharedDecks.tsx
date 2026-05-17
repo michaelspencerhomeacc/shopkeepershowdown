@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { ResourceCardTile } from './ResourceCardTile'
 import { CardImage } from './CardImage'
@@ -12,10 +11,9 @@ export function SharedDecks() {
     visitorDeck, visitorDiscard, activeVisitors,
     professionalSlots, workOrderDeck,
     players, buyFromFleaMarket, refillFleaMarket, claimVisitor, refillVisitors,
-    drawResource,
+    drawResource, activePlayerId, setActivePlayer,
   } = useGameStore()
 
-  const [activePlayerId, setActivePlayerId] = useState(players[0]?.id ?? '')
   const currentPlayer = players.find(p => p.id === activePlayerId) ?? players[0]
 
   return (
@@ -25,7 +23,7 @@ export function SharedDecks() {
         <span className="zone-label">Active Player:</span>
         <select
           value={activePlayerId}
-          onChange={e => setActivePlayerId(e.target.value)}
+          onChange={e => setActivePlayer(e.target.value)}
           className="bg-ink-800 border border-parchment-700/30 rounded px-2 py-0.5 text-xs text-parchment-200"
         >
           {players.map(p => (

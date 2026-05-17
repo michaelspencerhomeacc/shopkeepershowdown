@@ -8,7 +8,7 @@ import { CLASSES } from '../data/classes'
 const PAWN_COLORS = ['bg-red-500','bg-blue-500','bg-green-500','bg-yellow-400','bg-purple-500','bg-pink-500']
 
 export function Game() {
-  const { players, round, nextRound, resetGame } = useGameStore()
+  const { players, round, nextRound, resetGame, activePlayerId, setActivePlayer } = useGameStore()
 
   return (
     <div className="min-h-screen p-2 space-y-2">
@@ -30,6 +30,18 @@ export function Game() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-parchment-500">Active:</span>
+            <select
+              value={activePlayerId}
+              onChange={e => setActivePlayer(e.target.value)}
+              className="bg-ink-800 border border-parchment-700/30 rounded px-2 py-0.5 text-xs text-parchment-200"
+            >
+              {players.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
           <div className="text-parchment-300 text-xs">
             Round <span className="font-bold text-gold-300">{round}</span> / 6
           </div>

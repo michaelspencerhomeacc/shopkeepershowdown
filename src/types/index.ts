@@ -98,6 +98,8 @@ export interface Player {
   momentumTokens: number
   clanMarker: boolean
   hasNightWatcher: boolean
+  stolenHoardCardIds: string[]
+  pitchCampPending: boolean
 }
 
 export type Location = 'guildhall' | 'tavern' | 'wilderness' | 'barracks' | 'workshop' | 'thieves-guild'
@@ -112,6 +114,7 @@ export interface GameState {
   round: number
   players: Player[]
   pawns: LocationPawn[]
+  activePlayerId: string
 
   resourceDeck: ResourceCard[]
   resourceDiscard: ResourceCard[]
@@ -127,6 +130,7 @@ export interface GameState {
 
   actionLog: LogEntry[]
   diceResult: number | null
+  townCrierPeek: { playerId: string; cards: VisitorCard[] } | null
 }
 
 export interface LogEntry {
