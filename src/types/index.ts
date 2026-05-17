@@ -133,7 +133,10 @@ export interface GameState {
   townCrierPeek: { playerId: string; cards: VisitorCard[] } | null
   appraisePeek: { playerId: string; cards: ResourceCard[] } | null
   lastDrawnCards: ResourceCard[] | null
+  visitorDemandRemaining: Record<string, DemandMap>
 }
+
+export type DemandMap = { ARM: number; CON: number; TRI: number; TRG: number }
 
 export interface LogEntry {
   id: string

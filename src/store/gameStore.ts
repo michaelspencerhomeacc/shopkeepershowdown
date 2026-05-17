@@ -81,6 +81,11 @@ function buildInitialGameState(players: Player[]): GameState {
   // Night watcher starts with player 0
   if (players.length > 0) players[0].hasNightWatcher = true
 
+  const visitorDemandRemaining: Record<string, { ARM: number; CON: number; TRI: number; TRG: number }> = {}
+  for (const v of activeVisitors) {
+    if (v) visitorDemandRemaining[v.id] = parseRequirements(v.demand)
+  }
+
   return {
     phase: 'playing',
     round: 1,
@@ -98,6 +103,7 @@ function buildInitialGameState(players: Player[]): GameState {
     actionLog: [logEntry('Game started. Good luck, shopkeepers!')],
     diceResult: null,
     townCrierPeek: null,
+    visitorDemandRemaining,
   }
 }
 
@@ -207,6 +213,7 @@ const INITIAL: GameState = {
   townCrierPeek: null,
   appraisePeek: null,
   lastDrawnCards: null,
+  visitorDemandRemaining: {},
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -514,16 +521,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players.find(p => p.id === playerId)
     if (!player) return
 
-    // Pull spent cards from hoard
     const spentCards = cardIds.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
-    // Rep gained = 1 per card sold, by type (matches demand)
-    const repGains: Partial<Record<string, number>> = {}
-    for (const c of spentCards) repGains[c.type] = (repGains[c.type] ?? 0) + 1
+    // Rep only from the card's own repTokens
+    const repGains: Partial<Record<RepType, number>> = {}
+    for (const c of spentCards) {
+      if (c.repTokens > 0) repGains[c.type] = (repGains[c.type] ?? 0) + c.repTokens
+    }
     const coinsGained = spentCards.reduce((sum, c) => sum + c.value, 0)
+
+    // Reduce remaining demand
+    const newDemandRemaining = { ...get().visitorDemandRemaining }
+    const remaining = { ...(newDemandRemaining[visitor.id] ?? parseRequirements(visitor.demand)) }
+    for (const c of spentCards) { if (remaining[c.type] > 0) remaining[c.type]-- }
+    if (Object.values(remaining).every(n => n === 0)) {
+      delete newDemandRemaining[visitor.id]
+    } else {
+      newDemandRemaining[visitor.id] = remaining
+    }
 
     set(s => ({
       activeVisitors: s.activeVisitors.map((v, i) => i === visitorIdx ? null : v),
       visitorDiscard: [visitor, ...visitorDiscard],
+      visitorDemandRemaining: newDemandRemaining,
       resourceDiscard: [...spentCards, ...s.resourceDiscard],
       players: s.players.map(p => {
         if (p.id !== playerId) return p
@@ -537,7 +556,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           rep: newRep,
         }
       }),
-      actionLog: [logEntry(`${player.name} sold to ${visitor.name} — gained ${coinsGained} coins + rep.`, playerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${player.name} sold to ${visitor.name} — gained ${coinsGained} coins.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -556,7 +575,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       deck = rest
       return card
     })
-    set({ activeVisitors: newSlots, visitorDeck: deck, visitorDiscard: discard })
+    const newDemand = { ...get().visitorDemandRemaining }
+    newSlots.forEach(v => { if (v && !newDemand[v.id]) newDemand[v.id] = parseRequirements(v.demand) })
+    set({ activeVisitors: newSlots, visitorDeck: deck, visitorDiscard: discard, visitorDemandRemaining: newDemand })
   },
 
   rollDice(playerId) {
@@ -1081,6 +1102,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       visitorDiscard: discard,
       activeVisitors: newActiveVisitors,
       townCrierPeek: null,
+      visitorDemandRemaining: {
+        ...s.visitorDemandRemaining,
+        [placedCard.id]: s.visitorDemandRemaining[placedCard.id] ?? parseRequirements(placedCard.demand),
+      },
       actionLog: [logEntry(`Town Crier: placed ${placedCard.name} in visitor slot ${replaceSlotIdx + 1}.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
@@ -1311,13 +1336,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   sellPhaseAssign(playerId, assignments) {
-    const { players, activeVisitors } = get()
+    const { players, activeVisitors, visitorDemandRemaining, visitorDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
 
     const discarded: ResourceCard[] = []
-    const coinsGained: number[] = []
+    let totalCoins = 0
     const repGains: Partial<Record<RepType, number>> = {}
+    const usedWindowIdxs = new Set(assignments.map(a => a.windowIdx))
+
+    // Updated demand remaining after this sell phase
+    const newDemandRemaining = { ...visitorDemandRemaining }
+    // Visitors whose demand hit zero — to be claimed
+    const claimedVisitorIdxs: number[] = []
 
     for (const { visitorIdx, windowIdx } of assignments) {
       const win = player.windows[windowIdx]
@@ -1326,43 +1357,61 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       const card = win.card
       discarded.push(card)
-      coinsGained.push(card.value)
+      totalCoins += card.value
 
-      // Award 1 rep of the card's type if it matches any demanded type
-      const req = parseRequirements(visitor.demand)
-      if (req[card.type] > 0) {
-        repGains[card.type] = (repGains[card.type] ?? 0) + 1
+      // Rep only from the card's own repTokens, not from demand matching
+      if (card.repTokens > 0) {
+        repGains[card.type] = (repGains[card.type] ?? 0) + card.repTokens
+      }
+
+      // Reduce remaining demand for this visitor
+      const remaining = { ...(newDemandRemaining[visitor.id] ?? parseRequirements(visitor.demand)) }
+      if (remaining[card.type] > 0) remaining[card.type]--
+      newDemandRemaining[visitor.id] = remaining
+
+      // Check if fully satisfied
+      if (Object.values(remaining).every(n => n === 0)) {
+        claimedVisitorIdxs.push(visitorIdx)
       }
     }
 
-    const totalCoins = coinsGained.reduce((s, n) => s + n, 0)
-    const usedWindowIdxs = new Set(assignments.map(a => a.windowIdx))
+    const claimedVisitors = claimedVisitorIdxs.map(i => activeVisitors[i]).filter(Boolean) as VisitorCard[]
 
-    set(s => ({
-      resourceDiscard: [...discarded, ...s.resourceDiscard],
-      players: s.players.map(p => {
-        if (p.id !== playerId) return p
-        const newRep = { ...p.rep }
-        for (const [t, n] of Object.entries(repGains)) {
-          newRep[t as RepType] = (newRep[t as RepType] ?? 0) + n
-        }
-        return {
-          ...p,
-          coins: p.coins + totalCoins,
-          rep: newRep,
-          windows: p.windows.map((w, i) =>
-            usedWindowIdxs.has(i) ? { ...w, card: null, stolen: false } : w
-          ),
-        }
-      }),
-      actionLog: [
-        logEntry(
-          `${player.name} sell phase — sold ${discarded.length} item(s) for ${totalCoins} coins` +
-          (Object.keys(repGains).length ? ` +rep (${Object.entries(repGains).map(([t, n]) => `${n} ${t}`).join(', ')})` : '') + '.',
-          playerId
+    set(s => {
+      const newRep = { ...player.rep }
+      for (const [t, n] of Object.entries(repGains)) newRep[t as RepType] = (newRep[t as RepType] ?? 0) + n
+
+      // Remove claimed visitors from demand map
+      for (const v of claimedVisitors) delete newDemandRemaining[v.id]
+
+      return {
+        resourceDiscard: [...discarded, ...s.resourceDiscard],
+        visitorDemandRemaining: newDemandRemaining,
+        activeVisitors: s.activeVisitors.map((v, i) =>
+          claimedVisitorIdxs.includes(i) ? null : v
         ),
-        ...s.actionLog.slice(0, 49),
-      ],
-    }))
+        visitorDiscard: [...claimedVisitors, ...visitorDiscard],
+        players: s.players.map(p => {
+          if (p.id !== playerId) return p
+          return {
+            ...p,
+            coins: p.coins + totalCoins,
+            rep: newRep,
+            windows: p.windows.map((w, i) =>
+              usedWindowIdxs.has(i) ? { ...w, card: null, stolen: false } : w
+            ),
+          }
+        }),
+        actionLog: [
+          logEntry(
+            `${player.name} sell phase — sold ${discarded.length} item(s) for ${totalCoins} coins` +
+            (Object.keys(repGains).length ? ` +rep (${Object.entries(repGains).map(([t, n]) => `${n} ${t}`).join(', ')})` : '') +
+            (claimedVisitors.length ? ` — ${claimedVisitors.map(v => v.name).join(', ')} satisfied!` : '') + '.',
+            playerId
+          ),
+          ...s.actionLog.slice(0, 49),
+        ],
+      }
+    })
   },
 }))

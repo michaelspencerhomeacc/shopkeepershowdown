@@ -11,14 +11,14 @@ import type { ResourceCard } from '../types'
 // Professionals are portrait cards
 
 function VisitorSellRow({ visitor, slotIdx }: { visitor: import('../types').VisitorCard; slotIdx: number }) {
-  const { players, activePlayerId, claimVisitor } = useGameStore()
+  const { players, activePlayerId, claimVisitor, visitorDemandRemaining } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
   const [expanded, setExpanded] = useState(false)
   const [selected, setSelected] = useState<string[]>([])
 
   if (!player) return null
 
-  const req = parseRequirements(visitor.demand)
+  const req = visitorDemandRemaining[visitor.id] ?? parseRequirements(visitor.demand)
   const selectedCards = selected.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
   const canSell = meetsRequirements(selectedCards, req)
   const coinsPreview = selectedCards.reduce((s, c) => s + c.value, 0)
@@ -42,7 +42,10 @@ function VisitorSellRow({ visitor, slotIdx }: { visitor: import('../types').Visi
         <div className="flex-1 flex flex-col justify-center py-2 min-w-0">
           <div className="font-display font-semibold text-parchment-100 text-sm leading-tight truncate">{visitor.name}</div>
           <div className="text-xs text-parchment-500 italic mb-0.5">{visitor.title}</div>
-          <div className="text-xs text-gold-400 font-semibold">Wants: {visitor.demand}</div>
+          <div className="text-xs text-gold-400 font-semibold">
+            Wants:{' '}
+            {Object.entries(req).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ') || 'Satisfied!'}
+          </div>
         </div>
         <div className="flex items-center pr-2 flex-shrink-0">
           <button

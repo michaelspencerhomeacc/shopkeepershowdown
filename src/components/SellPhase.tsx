@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { ResourceCardMini } from './ResourceCardMini'
 import { parseRequirements } from '../utils/requirements'
-import type { ResourceCard, VisitorCard, ResourceType } from '../types'
+import type { ResourceCard, VisitorCard, ResourceType, DemandMap } from '../types'
 
 // One window card (with its slot index) that the player can sell
 interface WindowOption {
@@ -10,31 +10,31 @@ interface WindowOption {
   card: ResourceCard
 }
 
-// Per-visitor demand progress given the current pending assignments
+// Per-visitor remaining demand with this phase's pending assignment highlighted
 function DemandProgress({
-  visitor,
+  remaining,
   assignedCard,
 }: {
-  visitor: VisitorCard
+  remaining: DemandMap
   assignedCard: ResourceCard | null
 }) {
-  const req = parseRequirements(visitor.demand)
-  const entries = (Object.entries(req) as [ResourceType, number][]).filter(([, n]) => n > 0)
+  const entries = (Object.entries(remaining) as [ResourceType, number][]).filter(([, n]) => n > 0)
+  if (entries.length === 0) return <span className="text-[9px] text-green-400 font-semibold">Satisfied!</span>
 
   return (
     <div className="flex gap-1 flex-wrap">
       {entries.map(([type, need]) => {
-        const selling = assignedCard?.type === type ? 1 : 0
+        const selling = assignedCard?.type === type
         return (
           <span
             key={type}
             className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${
-              selling > 0
+              selling
                 ? 'bg-green-900/50 border-green-500/60 text-green-300'
                 : 'bg-ink-700 border-parchment-700/30 text-parchment-500'
             }`}
           >
-            {type} ×{need}{selling > 0 ? ' ✓' : ''}
+            {type} ×{need}{selling ? ' ↓' : ''}
           </span>
         )
       })}
@@ -43,7 +43,7 @@ function DemandProgress({
 }
 
 export function SellPhase() {
-  const { round, players, activePlayerId, activeVisitors, sellPhaseAssign } = useGameStore()
+  const { round, players, activePlayerId, activeVisitors, visitorDemandRemaining, sellPhaseAssign } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
 
   // assignments: visitorIdx → windowIdx
@@ -114,7 +114,7 @@ export function SellPhase() {
               {visitors.map(({ v: visitor, i: vi }) => {
                 const assignedWi = assignments.get(vi)
                 const assignedCard = assignedWi !== undefined ? (player.windows[assignedWi]?.card ?? null) : null
-                const req = parseRequirements(visitor!.demand)
+                const remaining = visitorDemandRemaining[visitor!.id] ?? parseRequirements(visitor!.demand)
                 const availableOptions = windowOptions.filter(
                   o => !usedWindowIdxs.has(o.windowIdx) || assignments.get(vi) === o.windowIdx
                 )
@@ -130,12 +130,14 @@ export function SellPhase() {
                       />
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-semibold text-parchment-100 truncate">{visitor!.name}</div>
-                        <DemandProgress visitor={visitor!} assignedCard={assignedCard} />
+                        <DemandProgress remaining={remaining as DemandMap} assignedCard={assignedCard} />
                       </div>
                       {assignedCard && (
-                        <div className="text-[10px] text-gold-400 flex-shrink-0">
+                        <div className="text-[10px] text-gold-400 flex-shrink-0 text-right">
                           +${assignedCard.value}
-                          {req[assignedCard.type] > 0 && <span className="text-green-400 ml-1">+rep</span>}
+                          {assignedCard.repTokens > 0 && (
+                            <div className="text-gold-300">★{assignedCard.repTokens} rep</div>
+                          )}
                         </div>
                       )}
                     </div>
