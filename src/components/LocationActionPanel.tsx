@@ -73,9 +73,10 @@ function ActionBlock({ children }: { children: React.ReactNode }) {
 // ---- Guildhall ----
 
 function GuildhallActions() {
-  const { activePlayerId, players, professionalSlots, consultation, addLog } = useGameStore()
+  const { activePlayerId, players, professionalSlots, consultation } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
   const [consultRep, setConsultRep] = useState<RepType>('ARM')
+  const [openProfId, setOpenProfId] = useState<string | null>(null)
 
   if (!player) return null
 
@@ -83,19 +84,26 @@ function GuildhallActions() {
     <>
       <ActionBlock>
         <SectionTitle>1. Hire a Professional</SectionTitle>
-        <div className="space-y-1">
+        <div className="space-y-2">
           {professionalSlots.filter(Boolean).map(prof => prof && (
-            <div key={prof.id} className="flex items-start gap-2">
-              <button
-                onClick={() => addLog(`${player.name} used ${prof.name}: ${prof.effect}`, player.id)}
-                className="btn-secondary text-xs px-2 py-0.5 flex-shrink-0"
-              >
-                Use
-              </button>
-              <div>
-                <div className="text-xs font-semibold text-parchment-200">{prof.name}</div>
-                <div className="text-[10px] text-parchment-400 leading-tight">{prof.effect}</div>
+            <div key={prof.id}>
+              <div className="flex items-start gap-2">
+                <button
+                  onClick={() => setOpenProfId(prev => prev === prof.id ? null : prof.id)}
+                  className={`btn-secondary text-xs px-2 py-0.5 flex-shrink-0 ${openProfId === prof.id ? 'ring-1 ring-gold-400' : ''}`}
+                >
+                  {openProfId === prof.id ? '▲ Close' : '▼ Use'}
+                </button>
+                <div>
+                  <div className="text-xs font-semibold text-parchment-200">{prof.name}</div>
+                  <div className="text-[10px] text-parchment-400 leading-tight">{prof.effect}</div>
+                </div>
               </div>
+              {openProfId === prof.id && (
+                <div className="mt-1.5 ml-14">
+                  <ProfessionalUI profId={prof.id} player={player} onDone={() => setOpenProfId(null)} />
+                </div>
+              )}
             </div>
           ))}
           {professionalSlots.every(s => !s) && (
@@ -124,7 +132,6 @@ function GuildhallActions() {
             onClick={() => consultation(player.id, consultRep)}
             disabled={player.coins < 3}
             className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
-            title={player.coins < 3 ? 'Need 3 coins' : `Pay 3 coins, gain 1 ${consultRep} rep`}
           >
             Pay 3 → +1 {consultRep}
           </button>
@@ -134,11 +141,312 @@ function GuildhallActions() {
 
       <ActionBlock>
         <SectionTitle>3. Negotiate</SectionTitle>
-        <p className="text-xs text-parchment-400">
-          Agree a direct resource swap with another player. No Stolen marker applied.
-        </p>
+        <p className="text-xs text-parchment-400">Agree a direct resource swap with another player. No Stolen marker applied.</p>
       </ActionBlock>
     </>
+  )
+}
+
+// Per-professional inline UIs
+
+function ProfessionalUI({ profId, player, onDone }: { profId: string; player: Player; onDone: () => void }) {
+  const store = useGameStore()
+
+  switch (profId) {
+    case 'p01': return <AlluringAlchemistUI player={player} onDone={onDone} />
+    case 'p02': return <BrazenBountyHunterUI player={player} onDone={onDone} />
+    case 'p03': return <CharismaticClerkUI player={player} onDone={onDone} />
+    case 'p04': return <PolitePromoterUI player={player} onDone={onDone} />
+    case 'p05': return (
+      <div className="space-y-1">
+        <div className="text-[10px] text-parchment-400">Roll d6, draw floor(roll/2) resources. Gain 1 rep per distinct type drawn.</div>
+        <button onClick={() => { store.marvellousMAscot(player.id); onDone() }} className="btn-primary text-xs px-2 py-0.5">
+          Roll &amp; Gather
+        </button>
+      </div>
+    )
+    case 'p06': return (
+      <div className="space-y-1">
+        <div className="text-[10px] text-parchment-400">
+          Launder 1 per spent active token (max 4). You have {3 - player.activeTokens} spent token(s).
+        </div>
+        <button
+          onClick={() => { store.resourcefulRecruiter(player.id); onDone() }}
+          disabled={player.activeTokens >= 3}
+          className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+        >
+          Launder {Math.min(4, 3 - player.activeTokens)}
+        </button>
+      </div>
+    )
+    case 'p07': return <ShadySaboteurUI player={player} onDone={onDone} />
+    case 'p08': return (
+      <div className="space-y-1">
+        <div className="text-[10px] text-parchment-400">Draw resources until one with a reputation icon is found.</div>
+        <button onClick={() => { store.skilfulStocker(player.id); onDone() }} className="btn-primary text-xs px-2 py-0.5">
+          Draw
+        </button>
+      </div>
+    )
+    case 'p09': return <AppraisePeekUI player={player} onDone={onDone} />
+    default: return null
+  }
+}
+
+function AlluringAlchemistUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { fleaMarket, tradeWithFleaMarket, refreshOneActiveToken, repairWindow } = useGameStore()
+  const [selHoard, setSelHoard] = useState<string[]>([])
+  const [selFlea, setSelFlea] = useState<number[]>([])
+  const [repairIdx, setRepairIdx] = useState<number>(
+    player.windows.findIndex(w => w.status === 'broken')
+  )
+
+  const brokenWindows = player.windows.map((w, i) => ({ ...w, i })).filter(w => w.status === 'broken')
+  const canTrade = selHoard.length > 0 && selHoard.length === selFlea.length && selHoard.length <= 3
+
+  function toggle<T>(arr: T[], val: T, max: number): T[] {
+    return arr.includes(val) ? arr.filter(x => x !== val) : arr.length < max ? [...arr, val] : arr
+  }
+
+  return (
+    <div className="space-y-2 text-[10px]">
+      <div className="text-parchment-400">Trade up to 3 with flea market:</div>
+      <div className="flex flex-wrap gap-1">
+        {player.hoard.map(c => (
+          <button key={c.id} onClick={() => setSelHoard(prev => toggle(prev, c.id, 3))}
+            className={`px-1.5 py-0.5 rounded border ${selHoard.includes(c.id) ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+            {c.name}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {fleaMarket.map((c, i) => c ? (
+          <button key={i} onClick={() => setSelFlea(prev => toggle(prev, i, 3))}
+            className={`px-1.5 py-0.5 rounded border ${selFlea.includes(i) ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+            {c.name}
+          </button>
+        ) : null)}
+      </div>
+      {brokenWindows.length > 0 && (
+        <div>
+          <div className="text-parchment-400 mb-0.5">Repair 1 window:</div>
+          <div className="flex gap-1">
+            {brokenWindows.map(w => (
+              <button key={w.i} onClick={() => setRepairIdx(w.i)}
+                className={`px-1.5 py-0.5 rounded border ${repairIdx === w.i ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                Window {w.i + 1}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <button
+        onClick={() => {
+          if (canTrade) tradeWithFleaMarket(player.id, selHoard, selFlea)
+          refreshOneActiveToken(player.id)
+          if (brokenWindows.length > 0 && repairIdx >= 0) repairWindow(player.id, repairIdx)
+          onDone()
+        }}
+        disabled={!canTrade}
+        className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+      >
+        Execute (Trade + Refresh + Repair)
+      </button>
+    </div>
+  )
+}
+
+function BrazenBountyHunterUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { players, bountyHunterCoins, bountyHunterResource } = useGameStore()
+  const others = players.filter(p => p.id !== player.id)
+  const [targetId, setTargetId] = useState(others[0]?.id ?? '')
+  const [cardId, setCardId] = useState('')
+  const target = players.find(p => p.id === targetId)
+
+  return (
+    <div className="space-y-1.5 text-[10px]">
+      <select value={targetId} onChange={e => { setTargetId(e.target.value); setCardId('') }}
+        className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 w-full">
+        {others.map(p => <option key={p.id} value={p.id}>{p.name} ({p.coins} coins, {p.hoard.length} hoard)</option>)}
+      </select>
+      <div className="flex gap-1">
+        <button
+          onClick={() => { bountyHunterCoins(player.id, targetId); onDone() }}
+          className="btn-secondary text-xs px-2 py-0.5"
+          title={`${target?.name} gives 2 coins`}
+        >
+          Take 2 coins
+        </button>
+        <span className="text-parchment-500 self-center">or</span>
+        <select value={cardId} onChange={e => setCardId(e.target.value)}
+          className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 flex-1">
+          <option value="">— pick resource —</option>
+          {target?.hoard.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
+        </select>
+        <button
+          onClick={() => { if (cardId) { bountyHunterResource(player.id, targetId, cardId); onDone() } }}
+          disabled={!cardId}
+          className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+        >
+          Take resource
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function CharismaticClerkUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { fleaMarket, distribute } = useGameStore()
+  const [slotIdx, setSlotIdx] = useState<number>(-1)
+  const available = fleaMarket.map((c, i) => ({ c, i })).filter(x => x.c !== null)
+
+  return (
+    <div className="space-y-1.5 text-[10px]">
+      <div className="text-parchment-400">Pick flea market card to distribute to a visitor. Gain its rep type.</div>
+      <div className="flex flex-wrap gap-1">
+        {available.map(({ c, i }) => c && (
+          <button key={i} onClick={() => setSlotIdx(i)}
+            className={`px-1.5 py-0.5 rounded border ${slotIdx === i ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+            {c.name} ({c.type})
+          </button>
+        ))}
+        {available.length === 0 && <span className="text-parchment-600 italic">Flea market empty</span>}
+      </div>
+      <button
+        onClick={() => { if (slotIdx >= 0) { distribute(player.id, slotIdx); onDone() } }}
+        disabled={slotIdx < 0}
+        className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+      >
+        Distribute → gain rep
+      </button>
+    </div>
+  )
+}
+
+function PolitePromoterUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { fleaMarket, refillFleaMarket, tradeWithFleaMarket } = useGameStore()
+  const [refreshed, setRefreshed] = useState(false)
+  const [selHoard, setSelHoard] = useState<string[]>([])
+  const [selFlea, setSelFlea] = useState<number[]>([])
+
+  function toggle<T>(arr: T[], val: T, max: number): T[] {
+    return arr.includes(val) ? arr.filter(x => x !== val) : arr.length < max ? [...arr, val] : arr
+  }
+
+  const canTrade = selHoard.length > 0 && selHoard.length === selFlea.length && selHoard.length <= 2
+
+  return (
+    <div className="space-y-2 text-[10px]">
+      {!refreshed ? (
+        <button
+          onClick={() => { refillFleaMarket(); setRefreshed(true) }}
+          className="btn-secondary text-xs px-2 py-0.5"
+        >
+          Step 1: Reset Flea Market
+        </button>
+      ) : (
+        <>
+          <div className="text-parchment-400 text-gold-300">✓ Flea Market reset. Now trade 2:</div>
+          <div className="flex flex-wrap gap-1">
+            {player.hoard.map(c => (
+              <button key={c.id} onClick={() => setSelHoard(prev => toggle(prev, c.id, 2))}
+                className={`px-1.5 py-0.5 rounded border ${selHoard.includes(c.id) ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                {c.name}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {fleaMarket.map((c, i) => c ? (
+              <button key={i} onClick={() => setSelFlea(prev => toggle(prev, i, 2))}
+                className={`px-1.5 py-0.5 rounded border ${selFlea.includes(i) ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                {c.name}
+              </button>
+            ) : null)}
+          </div>
+          <button
+            onClick={() => { tradeWithFleaMarket(player.id, selHoard, selFlea); onDone() }}
+            disabled={!canTrade}
+            className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+          >
+            Step 2: Trade {selHoard.length}/2
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+function ShadySaboteurUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { players, shadySaboteur } = useGameStore()
+  const others = players.filter(p => p.id !== player.id)
+  const [targetId, setTargetId] = useState(others[0]?.id ?? '')
+  const [winIdx, setWinIdx] = useState(0)
+  const target = players.find(p => p.id === targetId)
+  const win = target?.windows[winIdx]
+  const coinGain = win?.card ? Math.floor(win.card.value / 2) : 0
+
+  return (
+    <div className="space-y-1.5 text-[10px]">
+      <select value={targetId} onChange={e => { setTargetId(e.target.value); setWinIdx(0) }}
+        className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 w-full">
+        {others.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <select value={winIdx} onChange={e => setWinIdx(Number(e.target.value))}
+        className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 w-full">
+        {target?.windows.map((w, i) => (
+          <option key={w.id} value={i} disabled={!w.card}>
+            Window {i + 1}{w.card ? ` — ${w.card.name} ($${w.card.value}) → +$${Math.floor(w.card.value / 2)}` : ' (empty)'}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={() => { shadySaboteur(player.id, targetId, winIdx); onDone() }}
+        disabled={!win?.card}
+        className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+      >
+        Break window, gain ${coinGain}
+      </button>
+    </div>
+  )
+}
+
+function AppraisePeekUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { appraisePeek, peekAppraise, completeAppraise } = useGameStore()
+  const [selected, setSelected] = useState<string[]>([])
+  const isMyPeek = appraisePeek?.playerId === player.id
+
+  if (!isMyPeek) {
+    return (
+      <div className="space-y-1 text-[10px]">
+        <div className="text-parchment-400">Look at top 4 of deck, keep 3, return 1.</div>
+        <button onClick={() => peekAppraise(player.id)} className="btn-secondary text-xs px-2 py-0.5">
+          Peek Top 4
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5 text-[10px]">
+      <div className="text-parchment-400">Select up to 3 to keep (return the rest):</div>
+      <div className="flex flex-wrap gap-1">
+        {appraisePeek!.cards.map(c => (
+          <button
+            key={c.id}
+            onClick={() => setSelected(prev => prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 3 ? [...prev, c.id] : prev)}
+            className={`px-1.5 py-0.5 rounded border ${selected.includes(c.id) ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+          >
+            {c.name} ({c.type} ${c.value})
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => { completeAppraise(player.id, selected); setSelected([]); onDone() }}
+        className="btn-primary text-xs px-2 py-0.5"
+      >
+        Keep {selected.length} → done
+      </button>
+    </div>
   )
 }
 

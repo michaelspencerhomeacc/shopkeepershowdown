@@ -28,103 +28,108 @@ export function SharedBoard() {
     movePawn(playerId, here ? null : loc)
   }
 
-  function handleZoneClick(locId: Location) {
-    setSelectedLocation(prev => prev === locId ? null : locId)
-  }
-
   return (
-    <div className="panel p-1">
-      {/* Board with overlay — height capped so whole image fits in viewport */}
-      <div className="relative mx-auto rounded-lg overflow-hidden select-none"
-           style={{ height: 'min(55vh, 550px)', aspectRatio: '2000 / 1414' }}>
-        <img
-          src="/cards/board/Main.png"
-          alt="Town Board"
-          className="absolute inset-0 w-full h-full object-cover"
-        />
+    <>
+      <div className="panel p-1">
+        {/* Board image — pawn placement only */}
+        <div className="relative mx-auto rounded-lg overflow-hidden select-none"
+             style={{ height: 'min(55vh, 550px)', aspectRatio: '2000 / 1414' }}>
+          <img
+            src="/cards/board/Main.png"
+            alt="Town Board"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
 
-        {/* Transparent overlay grid — 3 cols × 2 rows, matches board panels */}
-        <div className="absolute inset-0 grid grid-cols-3 grid-rows-2">
-          {LOCATIONS.map(loc => {
-            const pawnsHere = pawns.filter(pw => pw.location === loc.id)
-            const absent = players.filter(p => !pawns.some(pw => pw.playerId === p.id && pw.location === loc.id))
-            const isSelected = selectedLocation === loc.id
+          <div className="absolute inset-0 grid grid-cols-3 grid-rows-2">
+            {LOCATIONS.map(loc => {
+              const pawnsHere = pawns.filter(pw => pw.location === loc.id)
+              const absent = players.filter(p => !pawns.some(pw => pw.playerId === p.id && pw.location === loc.id))
+              const isSelected = selectedLocation === loc.id
 
-            return (
-              <div
-                key={loc.id}
-                className={`relative flex flex-col justify-between p-2 cursor-pointer transition-all rounded-lg
-                  ${isSelected ? 'ring-2 ring-gold-400/60 bg-gold-400/5' : 'hover:bg-white/5'}`}
-                onClick={() => handleZoneClick(loc.id)}
-                title={`Click to open ${loc.label} actions`}
-              >
-                {/* Pawns currently here — top-right cluster */}
-                <div className="flex flex-wrap gap-1 justify-end">
-                  {pawnsHere.map(pw => {
-                    const idx = playerIdx(pw.playerId)
-                    const player = players[idx]
-                    return (
-                      <button
-                        key={pw.playerId}
-                        onClick={e => { e.stopPropagation(); movePawn(pw.playerId, null) }}
-                        className={`
-                          w-8 h-8 rounded-full ${PAWN_COLORS[idx % PAWN_COLORS.length]}
-                          border-2 ${PAWN_BORDERS[idx % PAWN_BORDERS.length]}
-                          flex items-center justify-center
-                          text-white text-xs font-bold shadow-lg
-                          hover:scale-110 active:scale-95 transition-transform
-                        `}
-                        title={`${player?.name} — click to remove from ${loc.label}`}
-                      >
-                        {player?.name.charAt(0)}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Move-here buttons — bottom of zone */}
-                {absent.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {absent.map(player => {
-                      const idx = playerIdx(player.id)
+              return (
+                <div
+                  key={loc.id}
+                  className={`relative flex flex-col justify-between p-2 transition-all
+                    ${isSelected ? 'ring-2 ring-inset ring-gold-400/80 bg-gold-400/10' : ''}`}
+                >
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    {pawnsHere.map(pw => {
+                      const idx = playerIdx(pw.playerId)
+                      const player = players[idx]
                       return (
                         <button
-                          key={player.id}
-                          onClick={e => { e.stopPropagation(); togglePawn(player.id, loc.id) }}
+                          key={pw.playerId}
+                          onClick={() => movePawn(pw.playerId, null)}
                           className={`
-                            text-[10px] font-bold px-1.5 py-0.5 rounded-full
-                            ${PAWN_COLORS[idx % PAWN_COLORS.length]}
-                            text-white shadow border border-white/30
-                            hover:scale-105 active:scale-95 transition-transform opacity-80 hover:opacity-100
+                            w-8 h-8 rounded-full ${PAWN_COLORS[idx % PAWN_COLORS.length]}
+                            border-2 ${PAWN_BORDERS[idx % PAWN_BORDERS.length]}
+                            flex items-center justify-center
+                            text-white text-xs font-bold shadow-lg
+                            hover:scale-110 active:scale-95 transition-transform
                           `}
-                          title={`Move ${player.name} to ${loc.label}`}
+                          title={`${player?.name} — click to remove from ${loc.label}`}
                         >
-                          + {player.name.split(' ')[0]}
+                          {player?.name.charAt(0)}
                         </button>
                       )
                     })}
                   </div>
-                )}
-              </div>
-            )
-          })}
+
+                  {absent.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {absent.map(player => {
+                        const idx = playerIdx(player.id)
+                        return (
+                          <button
+                            key={player.id}
+                            onClick={() => togglePawn(player.id, loc.id)}
+                            className={`
+                              text-[10px] font-bold px-1.5 py-0.5 rounded-full
+                              ${PAWN_COLORS[idx % PAWN_COLORS.length]}
+                              text-white shadow border border-white/30
+                              hover:scale-105 active:scale-95 transition-transform opacity-80 hover:opacity-100
+                            `}
+                            title={`Move ${player.name} to ${loc.label}`}
+                          >
+                            + {player.name.split(' ')[0]}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Location action buttons */}
+        <div className="flex gap-1 mt-1.5 flex-wrap justify-center">
+          {LOCATIONS.map(loc => (
+            <button
+              key={loc.id}
+              onClick={() => setSelectedLocation(prev => prev === loc.id ? null : loc.id)}
+              className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-all border ${
+                selectedLocation === loc.id
+                  ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                  : 'bg-ink-800 border-parchment-700/30 text-parchment-400 hover:border-parchment-500 hover:text-parchment-200'
+              }`}
+            >
+              {loc.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Hint when no location is selected */}
-      {!selectedLocation && (
-        <div className="text-center text-xs text-parchment-600 mt-1 italic">
-          Click a location to take actions
+      {/* Action panel — fixed overlay at bottom of viewport */}
+      {selectedLocation && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 max-h-[60vh] overflow-y-auto shadow-2xl border-t-2 border-gold-500/40">
+          <LocationActionPanel
+            location={selectedLocation}
+            onClose={() => setSelectedLocation(null)}
+          />
         </div>
       )}
-
-      {/* Location action panel */}
-      {selectedLocation && (
-        <LocationActionPanel
-          location={selectedLocation}
-          onClose={() => setSelectedLocation(null)}
-        />
-      )}
-    </div>
+    </>
   )
 }

@@ -131,6 +131,7 @@ export interface GameState {
   actionLog: LogEntry[]
   diceResult: number | null
   townCrierPeek: { playerId: string; cards: VisitorCard[] } | null
+  appraisePeek: { playerId: string; cards: ResourceCard[] } | null
 }
 
 export interface LogEntry {

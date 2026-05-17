@@ -168,6 +168,19 @@ interface GameStore extends GameState {
   peekTownCrier: (playerId: string) => void
   completeTownCrier: (playerId: string, placeCardId: string, replaceSlotIdx: number) => void
   takeFromFleaMarket: (playerId: string, slotIdx: number) => void
+
+  // Professional actions
+  refreshOneActiveToken: (playerId: string) => void
+  repairWindow: (playerId: string, windowIdx: number) => void
+  marvellousMAscot: (playerId: string) => void
+  resourcefulRecruiter: (playerId: string) => void
+  shadySaboteur: (byPlayerId: string, targetPlayerId: string, windowIdx: number) => void
+  skilfulStocker: (playerId: string) => void
+  peekAppraise: (playerId: string) => void
+  completeAppraise: (playerId: string, keepCardIds: string[]) => void
+  bountyHunterCoins: (byPlayerId: string, fromPlayerId: string) => void
+  bountyHunterResource: (byPlayerId: string, fromPlayerId: string, cardId: string) => void
+  distribute: (byPlayerId: string, fleaSlotIdx: number) => void
 }
 
 const INITIAL: GameState = {
@@ -187,6 +200,7 @@ const INITIAL: GameState = {
   actionLog: [],
   diceResult: null,
   townCrierPeek: null,
+  appraisePeek: null,
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -1034,5 +1048,204 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }))
     // Auto-refill
     get().refillFleaMarket()
+  },
+
+  // ---- Professional actions ----
+
+  refreshOneActiveToken(playerId) {
+    set(s => ({
+      players: s.players.map(p =>
+        p.id === playerId ? { ...p, activeTokens: Math.min(3, p.activeTokens + 1) } : p
+      ),
+    }))
+  },
+
+  repairWindow(playerId, windowIdx) {
+    const { players } = get()
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+    set(s => ({
+      players: s.players.map(p =>
+        p.id === playerId
+          ? { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'normal' as WindowStatus } : w) }
+          : p
+      ),
+      actionLog: [logEntry(`${player.name} repaired window ${windowIdx + 1}.`, playerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  marvellousMAscot(playerId) {
+    const { players } = get()
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+    const roll = Math.ceil(Math.random() * 6)
+    const drawCount = Math.floor(roll / 2)
+
+    let { resourceDeck, resourceDiscard } = get()
+    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
+    const drawn: ResourceCard[] = []
+    for (let i = 0; i < drawCount && player.hoard.length + drawn.length < 8 && deck.length > 0; i++) {
+      const [card, ...rest] = deck
+      drawn.push(card)
+      deck = rest
+    }
+
+    const distinctTypes = [...new Set(drawn.map(c => c.type))]
+
+    set(s => ({
+      resourceDeck: deck,
+      players: s.players.map(p => {
+        if (p.id !== playerId) return p
+        const rep = { ...p.rep }
+        distinctTypes.forEach(t => { rep[t] = rep[t] + 1 })
+        return { ...p, hoard: [...p.hoard, ...drawn], rep }
+      }),
+      diceResult: roll,
+      actionLog: [logEntry(`${player.name} used Marvellous Mascot — rolled ${roll}, drew ${drawn.length} card(s), gained rep: ${distinctTypes.join(', ') || 'none'}.`, playerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  resourcefulRecruiter(playerId) {
+    const { players } = get()
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+    const spentTokens = 3 - player.activeTokens
+    const count = Math.min(4, spentTokens)
+    if (count === 0) {
+      set(s => ({ actionLog: [logEntry(`${player.name} used Resourceful Recruiter — no spent tokens.`, playerId), ...s.actionLog.slice(0, 49)] }))
+      return
+    }
+    let { resourceDeck, resourceDiscard } = get()
+    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
+    const drawn: ResourceCard[] = []
+    for (let i = 0; i < count && player.hoard.length + drawn.length < 8 && deck.length > 0; i++) {
+      const [card, ...rest] = deck
+      drawn.push(card)
+      deck = rest
+    }
+    set(s => ({
+      resourceDeck: deck,
+      players: s.players.map(p =>
+        p.id === playerId
+          ? { ...p, hoard: [...p.hoard, ...drawn].slice(0, 8), stolenHoardCardIds: [...p.stolenHoardCardIds, ...drawn.map(c => c.id)] }
+          : p
+      ),
+      actionLog: [logEntry(`${player.name} used Resourceful Recruiter — laundered ${drawn.length} card(s).`, playerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  shadySaboteur(byPlayerId, targetPlayerId, windowIdx) {
+    const { players } = get()
+    const attacker = players.find(p => p.id === byPlayerId)
+    const target = players.find(p => p.id === targetPlayerId)
+    if (!attacker || !target) return
+    const win = target.windows[windowIdx]
+    if (!win?.card) return
+    const coinGain = Math.floor(win.card.value / 2)
+    const cardName = win.card.name
+    set(s => ({
+      players: s.players.map(p => {
+        if (p.id === byPlayerId) return { ...p, coins: p.coins + coinGain }
+        if (p.id === targetPlayerId) return { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' as WindowStatus } : w) }
+        return p
+      }),
+      actionLog: [logEntry(`${attacker.name} used Shady Saboteur on ${target.name}'s window ${windowIdx + 1} (${cardName}) — broke it, gained ${coinGain} coins.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  skilfulStocker(playerId) {
+    const { players } = get()
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+    let { resourceDeck, resourceDiscard } = get()
+    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
+    const drawn: ResourceCard[] = []
+    while (deck.length > 0 && player.hoard.length + drawn.length < 8) {
+      const [card, ...rest] = deck
+      drawn.push(card)
+      deck = rest
+      if (card.repTokens > 0) break
+    }
+    const foundRep = drawn.length > 0 && drawn[drawn.length - 1].repTokens > 0
+    set(s => ({
+      resourceDeck: deck,
+      players: s.players.map(p =>
+        p.id === playerId ? { ...p, hoard: [...p.hoard, ...drawn].slice(0, 8) } : p
+      ),
+      actionLog: [logEntry(`${player.name} used Skilful Stocker — drew ${drawn.length} card(s)${foundRep ? ', found rep card' : ' (no rep card found)'}.`, playerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  peekAppraise(playerId) {
+    const { resourceDeck } = get()
+    const cards = resourceDeck.slice(0, 4)
+    if (cards.length === 0) return
+    set({ appraisePeek: { playerId, cards } })
+  },
+
+  completeAppraise(playerId, keepCardIds) {
+    const { appraisePeek, players } = get()
+    if (!appraisePeek || appraisePeek.playerId !== playerId) return
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+    const kept = appraisePeek.cards.filter(c => keepCardIds.includes(c.id))
+    const returned = appraisePeek.cards.filter(c => !keepCardIds.includes(c.id))
+    set(s => ({
+      resourceDeck: [...returned, ...s.resourceDeck.slice(appraisePeek.cards.length)],
+      appraisePeek: null,
+      players: s.players.map(p =>
+        p.id === playerId ? { ...p, hoard: [...p.hoard, ...kept].slice(0, 8) } : p
+      ),
+      actionLog: [logEntry(`${player.name} appraised — kept ${kept.length}, returned ${returned.length} to deck.`, playerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  bountyHunterCoins(byPlayerId, fromPlayerId) {
+    const { players } = get()
+    const attacker = players.find(p => p.id === byPlayerId)
+    const target = players.find(p => p.id === fromPlayerId)
+    if (!attacker || !target) return
+    const amount = Math.min(2, target.coins)
+    set(s => ({
+      players: s.players.map(p => {
+        if (p.id === byPlayerId) return { ...p, coins: p.coins + amount }
+        if (p.id === fromPlayerId) return { ...p, coins: Math.max(0, p.coins - 2) }
+        return p
+      }),
+      actionLog: [logEntry(`${attacker.name} used Brazen Bounty Hunter — ${target.name} paid ${amount} coins.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  bountyHunterResource(byPlayerId, fromPlayerId, cardId) {
+    const { players } = get()
+    const attacker = players.find(p => p.id === byPlayerId)
+    const target = players.find(p => p.id === fromPlayerId)
+    if (!attacker || !target) return
+    const card = target.hoard.find(c => c.id === cardId)
+    if (!card || attacker.hoard.length >= 8) return
+    set(s => ({
+      players: s.players.map(p => {
+        if (p.id === byPlayerId) return { ...p, hoard: [...p.hoard, card] }
+        if (p.id === fromPlayerId) return { ...p, hoard: p.hoard.filter(c => c.id !== cardId), stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== cardId) }
+        return p
+      }),
+      actionLog: [logEntry(`${attacker.name} used Brazen Bounty Hunter — took ${card.name} from ${target.name}'s hoard.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
+  distribute(byPlayerId, fleaSlotIdx) {
+    const { fleaMarket, players } = get()
+    const card = fleaMarket[fleaSlotIdx]
+    if (!card) return
+    const player = players.find(p => p.id === byPlayerId)
+    if (!player) return
+    set(s => ({
+      fleaMarket: s.fleaMarket.map((c, i) => i === fleaSlotIdx ? null : c),
+      resourceDiscard: [card, ...s.resourceDiscard],
+      players: s.players.map(p =>
+        p.id === byPlayerId ? { ...p, rep: { ...p.rep, [card.type]: p.rep[card.type] + 1 } } : p
+      ),
+      actionLog: [logEntry(`${player.name} distributed ${card.name} (${card.type}) to a Visitor — gained 1 ${card.type} rep.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+    }))
   },
 }))
