@@ -3,6 +3,7 @@ import type {
   GameState, Player, ResourceCard, WorkOrderCard, VisitorCard,
   ClassId, Location, WindowStatus, LogEntry, RepType,
 } from '../types'
+import { parseRequirements } from '../utils/requirements'
 import { RESOURCE_CARDS } from '../data/resources'
 import { VISITOR_CARDS } from '../data/visitors'
 import { PROFESSIONAL_CARDS } from '../data/professionals'
@@ -182,6 +183,9 @@ interface GameStore extends GameState {
   bountyHunterResource: (byPlayerId: string, fromPlayerId: string, cardId: string) => void
   distribute: (byPlayerId: string, fleaSlotIdx: number) => void
   clearDrawnCards: () => void
+
+  // Sell phase
+  sellPhaseAssign: (playerId: string, assignments: { visitorIdx: number; windowIdx: number }[]) => void
 }
 
 const INITIAL: GameState = {
@@ -1304,5 +1308,61 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   clearDrawnCards() {
     set({ lastDrawnCards: null })
+  },
+
+  sellPhaseAssign(playerId, assignments) {
+    const { players, activeVisitors } = get()
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+
+    const discarded: ResourceCard[] = []
+    const coinsGained: number[] = []
+    const repGains: Partial<Record<RepType, number>> = {}
+
+    for (const { visitorIdx, windowIdx } of assignments) {
+      const win = player.windows[windowIdx]
+      const visitor = activeVisitors[visitorIdx]
+      if (!win?.card || !visitor) continue
+
+      const card = win.card
+      discarded.push(card)
+      coinsGained.push(card.value)
+
+      // Award 1 rep of the card's type if it matches any demanded type
+      const req = parseRequirements(visitor.demand)
+      if (req[card.type] > 0) {
+        repGains[card.type] = (repGains[card.type] ?? 0) + 1
+      }
+    }
+
+    const totalCoins = coinsGained.reduce((s, n) => s + n, 0)
+    const usedWindowIdxs = new Set(assignments.map(a => a.windowIdx))
+
+    set(s => ({
+      resourceDiscard: [...discarded, ...s.resourceDiscard],
+      players: s.players.map(p => {
+        if (p.id !== playerId) return p
+        const newRep = { ...p.rep }
+        for (const [t, n] of Object.entries(repGains)) {
+          newRep[t as RepType] = (newRep[t as RepType] ?? 0) + n
+        }
+        return {
+          ...p,
+          coins: p.coins + totalCoins,
+          rep: newRep,
+          windows: p.windows.map((w, i) =>
+            usedWindowIdxs.has(i) ? { ...w, card: null, stolen: false } : w
+          ),
+        }
+      }),
+      actionLog: [
+        logEntry(
+          `${player.name} sell phase — sold ${discarded.length} item(s) for ${totalCoins} coins` +
+          (Object.keys(repGains).length ? ` +rep (${Object.entries(repGains).map(([t, n]) => `${n} ${t}`).join(', ')})` : '') + '.',
+          playerId
+        ),
+        ...s.actionLog.slice(0, 49),
+      ],
+    }))
   },
 }))
