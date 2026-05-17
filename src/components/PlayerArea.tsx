@@ -234,29 +234,29 @@ export function PlayerArea({ player, playerIndex }: Props) {
           <div className="zone p-2 space-y-2">
             <div className="text-xs text-parchment-400">Choose one Work Order:</div>
             {pendingWorkOrders.map(wo => (
-              <div
+              <button
                 key={wo.id}
-                className="card h-[72px] w-full cursor-pointer hover:ring-2 hover:ring-gold-400 relative overflow-hidden"
                 onClick={() => chooseWorkOrder(player.id, wo.id)}
+                className="w-full flex items-center gap-3 bg-ink-800/60 rounded-lg border border-parchment-700/30 p-2 text-left hover:border-gold-400 hover:bg-ink-700/60 active:scale-[.99] transition-all"
               >
-                <CardImage src={wo.imageFile} alt={wo.name} className="w-full h-full object-cover" fallbackText={wo.name} />
-                <div className="absolute inset-y-0 right-0 w-1/2 bg-gradient-to-l from-black/80 to-transparent flex flex-col justify-center px-2">
-                  <div className="text-xs font-semibold text-white leading-tight">{wo.name}</div>
-                  <div className="text-[10px] text-parchment-400">{wo.recipe}</div>
-                  <div className="text-[10px] text-gold-400">${wo.price}</div>
+                <CardImage src={wo.imageFile} alt={wo.name} className="w-14 h-14 rounded object-cover flex-shrink-0" fallbackText="" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-parchment-100 leading-tight">{wo.name}</div>
+                  <div className="text-xs text-parchment-400 mt-0.5">Recipe: {wo.recipe}</div>
+                  <div className="text-sm font-bold text-gold-400 mt-1">${wo.price}</div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         )}
 
         {player.workOrder && (
-          <div className="card h-[72px] w-full relative overflow-hidden">
-            <CardImage src={player.workOrder.imageFile} alt={player.workOrder.name} className="w-full h-full object-cover" fallbackText={player.workOrder.name} />
-            <div className="absolute inset-y-0 right-0 w-1/2 bg-gradient-to-l from-black/80 to-transparent flex flex-col justify-center px-2">
-              <div className="text-xs font-semibold text-white leading-tight">{player.workOrder.name}</div>
-              <div className="text-[10px] text-parchment-400">{player.workOrder.recipe}</div>
-              <div className="text-[10px] text-gold-400">${player.workOrder.price}</div>
+          <div className="flex items-center gap-3 bg-ink-800/60 rounded-lg border border-parchment-700/30 p-2">
+            <CardImage src={player.workOrder.imageFile} alt={player.workOrder.name} className="w-12 h-12 rounded object-cover flex-shrink-0" fallbackText="" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-parchment-100 leading-tight">{player.workOrder.name}</div>
+              <div className="text-[11px] text-parchment-400 mt-0.5">Recipe: {player.workOrder.recipe}</div>
+              <div className="text-xs font-bold text-gold-400 mt-0.5">${player.workOrder.price}</div>
             </div>
           </div>
         )}
