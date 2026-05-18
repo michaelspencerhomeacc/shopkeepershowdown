@@ -3,7 +3,6 @@ import { useGameStore } from '../store/gameStore'
 import { ResourceCardTile } from './ResourceCardTile'
 import { CardImage } from './CardImage'
 import { ResourceCardMini } from './ResourceCardMini'
-import { SellPhase } from './SellPhase'
 import { parseRequirements, meetsRequirements } from '../utils/requirements'
 import type { ResourceCard } from '../types'
 
@@ -19,6 +18,11 @@ function VisitorSellRow({ visitor, slotIdx }: { visitor: import('../types').Visi
   if (!player) return null
 
   const req = visitorDemandRemaining[visitor.id] ?? parseRequirements(visitor.demand)
+  const hasAny = (req.ANY ?? 0) > 0
+  const demandedTypes = hasAny
+    ? new Set(['ARM', 'CON', 'TRI', 'TRG'])
+    : new Set((Object.entries(req) as [string, number][]).filter(([k, n]) => k !== 'ANY' && n > 0).map(([t]) => t))
+  const eligibleHoard = player.hoard.filter(c => demandedTypes.has(c.type))
   const selectedCards = selected.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
   const canSell = meetsRequirements(selectedCards, req)
   const coinsPreview = selectedCards.reduce((s, c) => s + c.value, 0)
@@ -77,7 +81,7 @@ function VisitorSellRow({ visitor, slotIdx }: { visitor: import('../types').Visi
           </div>
           {/* Hoard cards */}
           <div className="flex flex-wrap gap-2">
-            {player.hoard.map(c => (
+            {eligibleHoard.map(c => (
               <ResourceCardMini
                 key={c.id}
                 card={c}
@@ -86,7 +90,11 @@ function VisitorSellRow({ visitor, slotIdx }: { visitor: import('../types').Visi
                 onClick={() => toggle(c.id)}
               />
             ))}
-            {player.hoard.length === 0 && <span className="text-parchment-600 italic text-xs">Hoard is empty</span>}
+            {eligibleHoard.length === 0 && (
+              <span className="text-parchment-600 italic text-xs">
+                {player.hoard.length === 0 ? 'Hoard is empty' : 'No matching cards in hoard'}
+              </span>
+            )}
           </div>
           <button
             onClick={() => {
@@ -107,7 +115,6 @@ function VisitorSellRow({ visitor, slotIdx }: { visitor: import('../types').Visi
 
 export function SharedDecks() {
   const {
-    round,
     resourceDeck, resourceDiscard, fleaMarket,
     visitorDeck, visitorDiscard, activeVisitors,
     professionalSlots, workOrderDeck,
@@ -119,13 +126,6 @@ export function SharedDecks() {
 
   return (
     <div className="panel p-3 space-y-4">
-      {/* Sell Phase — visible from round 2 onwards */}
-      {round >= 2 && (
-        <div>
-          <h4 className="zone-label mb-2">Sell Phase — {currentPlayer?.name}</h4>
-          <SellPhase />
-        </div>
-      )}
 
       {/* Active player selector */}
       <div className="flex items-center gap-2">

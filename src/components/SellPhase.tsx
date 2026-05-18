@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { ResourceCardMini } from './ResourceCardMini'
 import { parseRequirements } from '../utils/requirements'
-import type { ResourceCard, VisitorCard, ResourceType, DemandMap } from '../types'
+import type { ResourceCard, VisitorCard, DemandMap } from '../types'
 
 // One window card (with its slot index) that the player can sell
 interface WindowOption {
@@ -18,23 +18,25 @@ function DemandProgress({
   remaining: DemandMap
   assignedCard: ResourceCard | null
 }) {
-  const entries = (Object.entries(remaining) as [ResourceType, number][]).filter(([, n]) => n > 0)
+  const entries = (Object.entries(remaining) as [string, number][]).filter(([, n]) => n > 0)
   if (entries.length === 0) return <span className="text-[9px] text-green-400 font-semibold">Satisfied!</span>
 
   return (
     <div className="flex gap-1 flex-wrap">
       {entries.map(([type, need]) => {
-        const selling = assignedCard?.type === type
+        const selling = type === 'ANY' ? !!assignedCard : assignedCard?.type === type
         return (
           <span
             key={type}
             className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${
               selling
                 ? 'bg-green-900/50 border-green-500/60 text-green-300'
-                : 'bg-ink-700 border-parchment-700/30 text-parchment-500'
+                : type === 'ANY'
+                  ? 'bg-amber-900/40 border-amber-500/60 text-amber-300'
+                  : 'bg-ink-700 border-parchment-700/30 text-parchment-500'
             }`}
           >
-            {type} ×{need}{selling ? ' ↓' : ''}
+            {type === 'ANY' ? '★ Any' : type} ×{need}{selling ? ' ↓' : ''}
           </span>
         )
       })}
@@ -42,29 +44,18 @@ function DemandProgress({
   )
 }
 
-export function SellPhase() {
-  const { round, players, activePlayerId, activeVisitors, visitorDemandRemaining, sellPhaseAssign } = useGameStore()
-  const player = players.find(p => p.id === activePlayerId) ?? players[0]
+export function SellPhase({ onDone }: { onDone?: () => void } = {}) {
+  const { round, players, currentTurnPlayerId, activeVisitors, visitorDemandRemaining, sellPhaseAssign } = useGameStore()
+  const player = players.find(p => p.id === currentTurnPlayerId) ?? players[0]
 
   // assignments: visitorIdx → windowIdx
   const [assignments, setAssignments] = useState<Map<number, number>>(new Map())
-  const [done, setDone] = useState(false)
 
   if (!player || round < 2) return null
-  if (done) {
-    return (
-      <div className="bg-green-900/30 border border-green-600/40 rounded-lg p-2 text-xs text-green-300 flex items-center justify-between">
-        <span>Sell phase complete.</span>
-        <button onClick={() => setDone(false)} className="text-parchment-400 hover:text-parchment-200 text-[10px]">
-          Re-open
-        </button>
-      </div>
-    )
-  }
 
   const windowOptions: WindowOption[] = player.windows
-    .map((w, i) => ({ windowIdx: i, card: w.card }))
-    .filter((w): w is WindowOption => w.card !== null)
+    .map((w, i) => ({ windowIdx: i, card: w.card, status: w.status }))
+    .filter((w): w is WindowOption & { status: string } => w.card !== null && w.status !== 'broken')
 
   const usedWindowIdxs = new Set(assignments.values())
   const visitors = activeVisitors.map((v, i) => ({ v, i })).filter(({ v }) => v !== null)
@@ -93,7 +84,7 @@ export function SellPhase() {
     }))
     sellPhaseAssign(player.id, list)
     setAssignments(new Map())
-    setDone(true)
+    onDone?.()
   }
 
   const totalCoins = Array.from(assignments.entries()).reduce((sum, [, wi]) => {
@@ -115,8 +106,18 @@ export function SellPhase() {
                 const assignedWi = assignments.get(vi)
                 const assignedCard = assignedWi !== undefined ? (player.windows[assignedWi]?.card ?? null) : null
                 const remaining = visitorDemandRemaining[visitor!.id] ?? parseRequirements(visitor!.demand)
+                const hasAny = (remaining.ANY ?? 0) > 0
+                const demandedTypes = hasAny
+                  ? new Set(['ARM', 'CON', 'TRI', 'TRG'])
+                  : new Set(
+                      (Object.entries(remaining) as [string, number][])
+                        .filter(([k, n]) => k !== 'ANY' && n > 0)
+                        .map(([t]) => t)
+                    )
                 const availableOptions = windowOptions.filter(
-                  o => !usedWindowIdxs.has(o.windowIdx) || assignments.get(vi) === o.windowIdx
+                  o =>
+                    demandedTypes.has(o.card.type) &&
+                    (!usedWindowIdxs.has(o.windowIdx) || assignments.get(vi) === o.windowIdx)
                 )
 
                 return (
@@ -164,18 +165,26 @@ export function SellPhase() {
           )}
 
           {/* Confirm bar */}
-          <div className="flex items-center justify-between pt-1">
+          <div className="flex items-center justify-between pt-1 gap-2">
             <span className="text-xs text-parchment-500">
               {assignments.size} sale{assignments.size !== 1 ? 's' : ''}
               {totalCoins > 0 && <span className="text-gold-400 ml-1">→ +${totalCoins} coins</span>}
             </span>
-            <button
-              onClick={confirm}
-              disabled={assignments.size === 0}
-              className="btn-primary text-xs px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Confirm Sell Phase
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onDone?.()}
+                className="btn-secondary text-xs px-3 py-1"
+              >
+                Skip
+              </button>
+              <button
+                onClick={confirm}
+                disabled={assignments.size === 0}
+                className="btn-primary text-xs px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Confirm Sales
+              </button>
+            </div>
           </div>
         </>
       )}

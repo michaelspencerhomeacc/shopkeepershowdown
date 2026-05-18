@@ -61,6 +61,24 @@ function logEntry(message: string, playerId?: string): LogEntry {
   return { id: crypto.randomUUID(), timestamp: Date.now(), message, playerId }
 }
 
+// Draw up to `count` cards, reshuffling discard mid-loop as needed
+function drawCards(
+  deck: ResourceCard[], discard: ResourceCard[], count: number,
+  currentCount: number, cap = 8
+): { drawn: ResourceCard[]; deck: ResourceCard[]; discard: ResourceCard[] } {
+  let d = [...deck], disc = [...discard]
+  const drawn: ResourceCard[] = []
+  for (let i = 0; i < count && currentCount + drawn.length < cap; i++) {
+    if (d.length === 0) {
+      if (disc.length === 0) break
+      d = shuffle(disc); disc = []
+    }
+    const [card, ...rest] = d
+    drawn.push(card); d = rest
+  }
+  return { drawn, deck: d, discard: disc }
+}
+
 function buildInitialGameState(players: Player[]): GameState {
   const resourceDeck = shuffle(RESOURCE_CARDS)
   const visitorDeck = shuffle(VISITOR_CARDS)
@@ -73,9 +91,10 @@ function buildInitialGameState(players: Player[]): GameState {
   // Professional slots: 3 face-up (fixed for the whole game)
   const professionalSlots = shuffle(PROFESSIONAL_CARDS).slice(0, 3)
 
-  // Give each player 5 starting resources in their hoard
+  // Deal 5 starting resources into each player's windows
   players.forEach(p => {
-    p.hoard = resourceDeck.splice(0, 5)
+    const dealt = resourceDeck.splice(0, 5)
+    p.windows = p.windows.map((w, i) => ({ ...w, card: dealt[i] ?? null }))
   })
 
   // Night watcher starts with player 0
@@ -104,6 +123,12 @@ function buildInitialGameState(players: Player[]): GameState {
     diceResult: null,
     townCrierPeek: null,
     visitorDemandRemaining,
+    currentTurnPlayerId: players[0]?.id ?? '',
+    turnActionsUsed: 0,
+    locationsUsedThisTurn: [],
+    sellPhaseDone: false,
+    clashResult: null,
+    endgame: null,
   }
 }
 
@@ -130,6 +155,7 @@ interface GameStore extends GameState {
   // Flea market
   buyFromFleaMarket: (playerId: string, slotIdx: number) => void
   refillFleaMarket: () => void
+  resetFleaMarket: () => void
 
   // Token actions
   adjustCoins: (playerId: string, delta: number) => void
@@ -184,6 +210,7 @@ interface GameStore extends GameState {
   shadySaboteur: (byPlayerId: string, targetPlayerId: string, windowIdx: number) => void
   skilfulStocker: (playerId: string) => void
   peekAppraise: (playerId: string) => void
+  peekWorkshopAppraise: (playerId: string) => void
   completeAppraise: (playerId: string, keepCardIds: string[]) => void
   bountyHunterCoins: (byPlayerId: string, fromPlayerId: string) => void
   bountyHunterResource: (byPlayerId: string, fromPlayerId: string, cardId: string) => void
@@ -192,6 +219,14 @@ interface GameStore extends GameState {
 
   // Sell phase
   sellPhaseAssign: (playerId: string, assignments: { visitorIdx: number; windowIdx: number }[]) => void
+  completeSellPhase: () => void
+
+  // Turn management
+  useTurnAction: (location: Location) => void
+  endTurn: () => void
+  dismissClash: () => void
+  _advanceTurn: () => void
+  advanceFinalSell: () => void
 }
 
 const INITIAL: GameState = {
@@ -214,6 +249,12 @@ const INITIAL: GameState = {
   appraisePeek: null,
   lastDrawnCards: null,
   visitorDemandRemaining: {},
+  currentTurnPlayerId: '',
+  turnActionsUsed: 0,
+  locationsUsedThisTurn: [],
+  sellPhaseDone: false,
+  clashResult: null,
+  endgame: null,
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -223,7 +264,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const players = playerDefs.map((p, i) =>
       makePlayer(`player-${i}`, p.name, p.classId)
     )
-    const state = buildInitialGameState(players)
+    // Roll d6 to determine first player; rotate order clockwise from winner
+    const rolls = players.map(p => ({ id: p.id, roll: Math.ceil(Math.random() * 6) }))
+    const maxRoll = Math.max(...rolls.map(r => r.roll))
+    const winnerIdx = rolls.findIndex(r => r.roll === maxRoll)
+    const orderedPlayers = [...players.slice(winnerIdx), ...players.slice(0, winnerIdx)]
+    const state = buildInitialGameState(orderedPlayers)
+    state.actionLog = [
+      logEntry(`Start-of-game roll: ${rolls.map(r => {
+        const p = players.find(pl => pl.id === r.id)!
+        return `${p.name} rolled ${r.roll}`
+      }).join(', ')}. ${orderedPlayers[0].name} goes first!`),
+    ]
     set(state)
   },
 
@@ -439,6 +491,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ fleaMarket: newFlea, resourceDeck: deck, resourceDiscard: discard })
   },
 
+  resetFleaMarket() {
+    const { resourceDeck, resourceDiscard, fleaMarket } = get()
+    const discarded = fleaMarket.filter((c): c is ResourceCard => c !== null)
+    let deck = resourceDeck
+    let discard = [...resourceDiscard, ...discarded]
+    if (deck.length < 5 && discard.length > 0) {
+      deck = [...deck, ...shuffle(discard)]
+      discard = []
+    }
+    const newFlea: (ResourceCard | null)[] = []
+    for (let i = 0; i < 5; i++) {
+      if (deck.length > 0) {
+        const [card, ...rest] = deck
+        newFlea.push(card)
+        deck = rest
+      } else {
+        newFlea.push(null)
+      }
+    }
+    set({ fleaMarket: newFlea, resourceDeck: deck, resourceDiscard: discard })
+  },
+
   adjustCoins(playerId, delta) {
     set(s => ({
       players: s.players.map(p =>
@@ -597,21 +671,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   nextRound() {
-    const { round } = get()
+    const { round, players: prePlayers } = get()
     const newRound = round + 1
+    const campPlayerIds = prePlayers.filter(p => p.pitchCampPending && p.classId !== 'monk').map(p => p.id)
+
     set(s => {
       const updatedPlayers = s.players.map(p => {
         let updated = { ...p, activeTokens: 3 }
         if (p.pitchCampPending) {
-          // Refresh 1 active token (already 3, so bonus) or +1 momentum for monk
           if (p.classId === 'monk') {
-            updated = {
-              ...updated,
-              momentumTokens: Math.min(8, updated.momentumTokens + 1),
-              pitchCampPending: false,
-            }
+            updated = { ...updated, momentumTokens: Math.min(8, updated.momentumTokens + 1), pitchCampPending: false }
           } else {
-            // Draw 2 resources handled below after set; mark cleared
             updated = { ...updated, pitchCampPending: false }
           }
         }
@@ -623,39 +693,35 @@ export const useGameStore = create<GameStore>((set, get) => ({
         actionLog: [logEntry(`--- Round ${newRound} begins ---`), ...s.actionLog.slice(0, 49)],
       }
     })
-    // Draw 2 resources for each player who had pitchCampPending
-    const prevPlayers = get().players
-    prevPlayers.forEach(p => {
-      // We already cleared pitchCampPending so use original state before set
-    })
-    // Re-check original: iterate and draw for camp players
     get().refillVisitors()
     get().refillFleaMarket()
+    // Each player draws 1 resource per round; pitch camp players draw 2 extra
     if (newRound <= 6) {
       const { players } = get()
-      players.forEach(p => get().drawResource(p.id, true))
+      players.forEach(p => {
+        get().drawResource(p.id, true)
+        if (campPlayerIds.includes(p.id)) {
+          get().drawResource(p.id, true)
+          get().drawResource(p.id, true)
+          get().addLog(`${p.name} draws 2 bonus resources from Pitch Camp.`, p.id)
+        }
+      })
     }
   },
 
   // ---- Location actions ----
 
   gather(playerId) {
-    const { players } = get()
+    const { players, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
     const roll = Math.ceil(Math.random() * 6)
 
-    let { resourceDeck, resourceDiscard } = get()
-    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
-    const drawn: ResourceCard[] = []
-    for (let i = 0; i < roll && player.hoard.length + drawn.length < 8 && deck.length > 0; i++) {
-      const [card, ...rest] = deck
-      drawn.push(card)
-      deck = rest
-    }
+    const { drawn, deck, discard } = drawCards(resourceDeck, resourceDiscard, roll, player.hoard.length)
 
     set(s => ({
       resourceDeck: deck,
+      resourceDiscard: discard,
       diceResult: roll,
       lastDrawnCards: drawn,
       players: s.players.map(p =>
@@ -745,21 +811,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   appraise(playerId, count) {
-    const { players } = get()
+    const { players, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
 
-    let { resourceDeck, resourceDiscard } = get()
-    let deck = resourceDeck.length > 0 ? [...resourceDeck] : shuffle([...resourceDiscard])
-    const drawn: ResourceCard[] = []
-    for (let i = 0; i < count && player.hoard.length + drawn.length < 8 && deck.length > 0; i++) {
-      const [card, ...rest] = deck
-      drawn.push(card)
-      deck = rest
-    }
+    const { drawn, deck, discard } = drawCards(resourceDeck, resourceDiscard, count, player.hoard.length)
 
     set(s => ({
       resourceDeck: deck,
+      resourceDiscard: discard,
       lastDrawnCards: drawn,
       players: s.players.map(p =>
         p.id === playerId ? { ...p, hoard: [...p.hoard, ...drawn] } : p
@@ -774,13 +834,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!player) return
     if (playerCardIds.length !== fleaSlotIndices.length) return
 
-    const playerCards = playerCardIds.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
+    const cardIdSet = new Set(playerCardIds)
+    // Cards can come from hoard or windows
+    const allCards = [
+      ...player.hoard,
+      ...player.windows.flatMap(w => w.card ? [w.card] : []),
+    ]
+    const playerCards = playerCardIds.map(id => allCards.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
     const marketCards = fleaSlotIndices.map(i => fleaMarket[i]).filter(Boolean) as ResourceCard[]
     if (playerCards.length !== playerCardIds.length) return
 
     set(s => {
       const newHoard = [
-        ...s.players.find(p => p.id === playerId)!.hoard.filter(c => !playerCardIds.includes(c.id)),
+        ...s.players.find(p => p.id === playerId)!.hoard.filter(c => !cardIdSet.has(c.id)),
         ...marketCards,
       ]
       const newFlea = s.fleaMarket.map((c, i) => {
@@ -795,7 +861,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
             ? {
                 ...p,
                 hoard: newHoard,
-                stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !playerCardIds.includes(id)),
+                stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIdSet.has(id)),
+                windows: p.windows.map(w =>
+                  w.card && cardIdSet.has(w.card.id) ? { ...w, card: null } : w
+                ),
               }
             : p
         ),
@@ -1029,7 +1098,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players.find(p => p.id === playerId)
     if (!player || !player.workOrder) return
 
-    const spentCards = cardIds.map(id => player.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
+    const cardIdSet = new Set(cardIds)
+    // Cards can come from hoard or windows
+    const fromHoard = player.hoard.filter(c => cardIdSet.has(c.id))
+    const fromWindows = player.windows.flatMap(w => (w.card && cardIdSet.has(w.card.id) ? [w.card] : []))
+    const spentCards = [...fromHoard, ...fromWindows]
     const gained = player.workOrder.price
 
     set(s => ({
@@ -1040,8 +1113,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
               ...p,
               workOrder: null,
               coins: p.coins + gained,
-              hoard: p.hoard.filter(c => !cardIds.includes(c.id)),
-              stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIds.includes(id)),
+              hoard: p.hoard.filter(c => !cardIdSet.has(c.id)),
+              stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIdSet.has(id)),
+              windows: p.windows.map(w =>
+                w.card && cardIdSet.has(w.card.id) ? { ...w, card: null } : w
+              ),
             }
           : p
       ),
@@ -1261,7 +1337,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { resourceDeck } = get()
     const cards = resourceDeck.slice(0, 4)
     if (cards.length === 0) return
-    set({ appraisePeek: { playerId, cards } })
+    set({ appraisePeek: { playerId, cards, maxKeep: 3 } })
+  },
+
+  peekWorkshopAppraise(playerId) {
+    const { resourceDeck } = get()
+    const cards = resourceDeck.slice(0, 4)
+    if (cards.length === 0) return
+    set({ appraisePeek: { playerId, cards, maxKeep: 2 } })
   },
 
   completeAppraise(playerId, keepCardIds) {
@@ -1335,6 +1418,148 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ lastDrawnCards: null })
   },
 
+  completeSellPhase() {
+    set({ sellPhaseDone: true })
+  },
+
+  useTurnAction(location) {
+    const { turnActionsUsed, locationsUsedThisTurn, currentTurnPlayerId } = get()
+    get().movePawn(currentTurnPlayerId, location)
+    set({
+      turnActionsUsed: turnActionsUsed + 1,
+      locationsUsedThisTurn: locationsUsedThisTurn.includes(location)
+        ? locationsUsedThisTurn
+        : [...locationsUsedThisTurn, location],
+    })
+  },
+
+  endTurn() {
+    const { players, pawns, currentTurnPlayerId } = get()
+
+    // --- Clash check ---
+    const myPawn = pawns.find(pw => pw.playerId === currentTurnPlayerId)
+    if (myPawn) {
+      const clashPawns = pawns.filter(pw => pw.location === myPawn.location)
+      if (clashPawns.length >= 2) {
+        // Roll d6 for every player at this location
+        const rolls = clashPawns.map(pw => ({
+          playerId: pw.playerId,
+          roll: Math.ceil(Math.random() * 6),
+        }))
+        const maxRoll = Math.max(...rolls.map(r => r.roll))
+        const winners = rolls.filter(r => r.roll === maxRoll)
+        const isTie = winners.length > 1
+
+        let updatedPlayers = [...players]
+        const spoils: { winnerId: string; cardName: string; fromName: string }[] = []
+
+        if (!isTie) {
+          const winnerId = winners[0].playerId
+          const loserIds = rolls.filter(r => r.playerId !== winnerId).map(r => r.playerId)
+
+          for (const loserId of loserIds) {
+            const loser = updatedPlayers.find(p => p.id === loserId)
+            if (!loser || loser.hoard.length === 0) continue
+            const stolen = loser.hoard[Math.floor(Math.random() * loser.hoard.length)]
+            const loserName = loser.name
+            // Remove from loser
+            updatedPlayers = updatedPlayers.map(p =>
+              p.id === loserId ? { ...p, hoard: p.hoard.filter(c => c.id !== stolen.id) } : p
+            )
+            // Add to winner, mark as stolen
+            updatedPlayers = updatedPlayers.map(p =>
+              p.id === winnerId
+                ? { ...p, hoard: [...p.hoard, stolen], stolenHoardCardIds: [...p.stolenHoardCardIds, stolen.id] }
+                : p
+            )
+            spoils.push({ winnerId, cardName: stolen.name, fromName: loserName })
+          }
+          // Refresh 1 active token for winner
+          updatedPlayers = updatedPlayers.map(p =>
+            p.id === winnerId ? { ...p, activeTokens: Math.min(3, p.activeTokens + 1) } : p
+          )
+
+          const winnerName = players.find(p => p.id === winnerId)?.name ?? 'Someone'
+          get().addLog(`Clash at ${myPawn.location}! ${winnerName} wins with a ${maxRoll}.`)
+        } else {
+          get().addLog(`Clash at ${myPawn.location}! Tie — no effect.`)
+        }
+
+        set({
+          players: updatedPlayers,
+          clashResult: {
+            location: myPawn.location,
+            rolls,
+            winnerId: isTie ? null : winners[0].playerId,
+            spoils,
+          },
+        })
+        // Don't advance turn yet — wait for dismiss
+        return
+      }
+    }
+
+    get()._advanceTurn()
+  },
+
+  dismissClash() {
+    set({ clashResult: null })
+    get()._advanceTurn()
+  },
+
+  _advanceTurn() {
+    const { players, currentTurnPlayerId, round } = get()
+    const idx = players.findIndex(p => p.id === currentTurnPlayerId)
+    const nextIdx = idx + 1
+
+    if (nextIdx >= players.length) {
+      if (round >= 6) {
+        // End of round 6 — trigger final sell phase for all players in order
+        const queue = players.map(p => p.id)
+        set({
+          endgame: { phase: 'final-sell', playerQueue: queue },
+          currentTurnPlayerId: queue[0],
+          activePlayerId: queue[0],
+        })
+        return
+      }
+      get().nextRound()
+      const freshPlayers = get().players
+      set({
+        currentTurnPlayerId: freshPlayers[0]?.id ?? '',
+        activePlayerId: freshPlayers[0]?.id ?? '',
+        turnActionsUsed: 0,
+        locationsUsedThisTurn: [],
+        sellPhaseDone: false,
+      })
+    } else {
+      const next = players[nextIdx]
+      set({
+        currentTurnPlayerId: next.id,
+        activePlayerId: next.id,
+        turnActionsUsed: 0,
+        locationsUsedThisTurn: [],
+        sellPhaseDone: false,
+      })
+    }
+  },
+
+  advanceFinalSell() {
+    const { endgame, players } = get()
+    if (!endgame || endgame.phase !== 'final-sell') return
+    const remaining = endgame.playerQueue.slice(1)
+    if (remaining.length === 0) {
+      set({ endgame: { phase: 'scoring' } })
+    } else {
+      const next = players.find(p => p.id === remaining[0])
+      set({
+        endgame: { phase: 'final-sell', playerQueue: remaining },
+        activePlayerId: next?.id ?? remaining[0],
+        currentTurnPlayerId: next?.id ?? remaining[0],
+      })
+    }
+  },
+
   sellPhaseAssign(playerId, assignments) {
     const { players, activeVisitors, visitorDemandRemaining, visitorDiscard } = get()
     const player = players.find(p => p.id === playerId)
@@ -1367,6 +1592,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       // Reduce remaining demand for this visitor
       const remaining = { ...(newDemandRemaining[visitor.id] ?? parseRequirements(visitor.demand)) }
       if (remaining[card.type] > 0) remaining[card.type]--
+      else if ((remaining.ANY ?? 0) > 0) remaining.ANY--
       newDemandRemaining[visitor.id] = remaining
 
       // Check if fully satisfied
@@ -1413,5 +1639,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ],
       }
     })
+    // Auto-replace any claimed visitors with new ones from the deck
+    if (claimedVisitorIdxs.length > 0) get().refillVisitors()
   },
 }))

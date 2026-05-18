@@ -131,12 +131,27 @@ export interface GameState {
   actionLog: LogEntry[]
   diceResult: number | null
   townCrierPeek: { playerId: string; cards: VisitorCard[] } | null
-  appraisePeek: { playerId: string; cards: ResourceCard[] } | null
+  appraisePeek: { playerId: string; cards: ResourceCard[]; maxKeep: number } | null
   lastDrawnCards: ResourceCard[] | null
   visitorDemandRemaining: Record<string, DemandMap>
+
+  // Turn management
+  currentTurnPlayerId: string
+  turnActionsUsed: number
+  locationsUsedThisTurn: Location[]
+  sellPhaseDone: boolean
+
+  clashResult: {
+    location: Location
+    rolls: { playerId: string; roll: number }[]
+    winnerId: string | null
+    spoils: { winnerId: string; cardName: string; fromName: string }[]
+  } | null
+
+  endgame: null | { phase: 'final-sell'; playerQueue: string[] } | { phase: 'scoring' }
 }
 
-export type DemandMap = { ARM: number; CON: number; TRI: number; TRG: number }
+export type DemandMap = { ARM: number; CON: number; TRI: number; TRG: number; ANY: number }
 
 export interface LogEntry {
   id: string
