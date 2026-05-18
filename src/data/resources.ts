@@ -40,7 +40,7 @@ export const RESOURCE_CARDS: ResourceCard[] = [
   { id: 'r031', name: 'Gnomes Beard',                           type: 'CON', value: 2, repTokens: 1, imageFile: '/cards/resources/Gnomes Beard.png' },
   { id: 'r032', name: 'Jar of Concentrated Moonlight',          type: 'CON', value: 6, repTokens: 1, imageFile: '/cards/resources/Jar of Concentrated Moonlight.png' },
   { id: 'r033', name: "Kraken's Tentacle",                      type: 'CON', value: 5, repTokens: 0, imageFile: "/cards/resources/Kraken's Tentacle.png" },
-  { id: 'r034', name: "Manticore's Milk",                       type: 'CON', value: 2, repTokens: 1, imageFile: "/cards/resources/Manticore's Milk.png" },
+  { id: 'r034', name: "Manticore's Milk",                       type: 'TRG', value: 2, repTokens: 1, imageFile: "/cards/resources/Manticore's Milk.png" },
   { id: 'r035', name: 'Medusa Snake Venom',                     type: 'CON', value: 7, repTokens: 0, imageFile: '/cards/resources/Medusa Snake Venom.png' },
   { id: 'r036', name: 'Potion of Dark Vision',                  type: 'CON', value: 5, repTokens: 0, imageFile: '/cards/resources/Potion of Dark Vision.png' },
   { id: 'r037', name: 'Potion of Faerie Essence',               type: 'CON', value: 7, repTokens: 0, imageFile: '/cards/resources/Potion of Faerie Essence.png' },
@@ -57,7 +57,7 @@ export const RESOURCE_CARDS: ResourceCard[] = [
 
   // ── Trinkets ────────────────────────────────────────────────────────────────
   { id: 'r048', name: 'A Tooth of Uncertain Origin',            type: 'TRI', value: 4, repTokens: 0, imageFile: '/cards/resources/A Tooth of Uncertain Origin.png' },
-  { id: 'r049', name: 'Chromatic Bar',                          type: 'TRI', value: 8, repTokens: 0, imageFile: '/cards/resources/Chromatic Bar.png' },
+  { id: 'r049', name: 'Chromatic Bar',                          type: 'TRG', value: 8, repTokens: 0, imageFile: '/cards/resources/Chromatic Bar.png' },
   { id: 'r050', name: 'Compass of Mild Suggestion',             type: 'TRI', value: 5, repTokens: 1, imageFile: '/cards/resources/Compass of Mild Suggestion.png' },
   { id: 'r051', name: 'Crown of Fiery Rage',                    type: 'TRI', value: 8, repTokens: 0, imageFile: '/cards/resources/Crown of Fiery Rage.png' },
   { id: 'r052', name: 'Deck of Forbidden Tarots',               type: 'TRI', value: 6, repTokens: 1, imageFile: '/cards/resources/Deck of Forbidden Tarots.png' },
@@ -74,14 +74,14 @@ export const RESOURCE_CARDS: ResourceCard[] = [
   { id: 'r063', name: 'The Coin of Certainty',                  type: 'TRI', value: 4, repTokens: 0, imageFile: '/cards/resources/The Coin of Certainty.png' },
   { id: 'r064', name: 'The Fate-weavers Decision Maker',        type: 'TRI', value: 6, repTokens: 0, imageFile: '/cards/resources/The Fate-weavers Decision Maker.png' },
   { id: 'r065', name: 'The Key to Nowhere',                     type: 'TRI', value: 2, repTokens: 1, imageFile: '/cards/resources/The Key to Nowhere.png' },
-  { id: 'r066', name: 'The Last Unicorn Horn',                  type: 'TRI', value: 8, repTokens: 0, imageFile: '/cards/resources/The Last Unicorn Horn.png' },
+
   { id: 'r067', name: 'The Misguided Soldiers Relic',           type: 'TRI', value: 3, repTokens: 0, imageFile: '/cards/resources/The Misguided Soldiers Relic.png' },
   { id: 'r068', name: 'The Pennant of the Lost Kingdom',        type: 'TRI', value: 2, repTokens: 2, imageFile: '/cards/resources/The Pennant of the Lost Kingdom.png' },
   { id: 'r069', name: 'The Rock of Companionship',              type: 'TRI', value: 1, repTokens: 2, imageFile: '/cards/resources/The Rock of Companionship.png' },
   { id: 'r070', name: 'The Scroll of Ancient Tongue',           type: 'TRI', value: 3, repTokens: 1, imageFile: '/cards/resources/The Scroll of Ancient Tongue.png' },
   { id: 'r071', name: 'The Scryers Prediction Orb',             type: 'TRI', value: 5, repTokens: 0, imageFile: '/cards/resources/The Scryers Prediction Orb.png' },
   { id: 'r072', name: 'The Tavern Keepers Shawl',               type: 'TRI', value: 1, repTokens: 1, imageFile: '/cards/resources/The Tavern Keepers Shawl.png' },
-  { id: 'r073', name: 'Invisible Ink',                          type: 'TRI', value: 5, repTokens: 0, imageFile: '/cards/resources/Invisible Ink.png' },
+  { id: 'r073', name: 'Invisible Ink',                          type: 'TRG', value: 5, repTokens: 0, imageFile: '/cards/resources/Invisible Ink.png' },
 
   // ── Trade Goods ─────────────────────────────────────────────────────────────
   { id: 'r074', name: 'Bolt of  Darkwood Fur',                  type: 'TRG', value: 6, repTokens: 0, imageFile: '/cards/resources/Bolt of  Darkwood Fur.png' },
