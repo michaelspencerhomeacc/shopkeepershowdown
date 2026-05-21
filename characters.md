@@ -1,0 +1,301 @@
+# Shopkeeper Showdown — Adventurer Classes
+
+The game has 8 playable adventurer classes. Each player chooses 1 at game start. Each class has:
+- 1 Passive ability (always on or triggered automatically)
+- 2 Active abilities (cost 1 Active token to use, or are off-turn)
+- 1 Class Feature (a unique mechanic that defines the class)
+
+Some classes use custom components (Counterfeits, Renown Cards, Momentum, Debt tokens, etc.).
+
+Recommended starter classes for first-time play: **Barbarian, Ranger, Monk, Sorcerer**.
+
+---
+
+## 1. Barbarian — Ronan Ellisbane
+
+**Identity:** The Antagonist
+**Difficulty:** 1/5
+
+### Passive — Fearsome Champion
+- Add 2 to all Clash rolls.
+- Other players may give you 2 resources from their Hoard to make you retreat from any Clash you are part of (you forfeit the Clash; they don't have to roll).
+- Always on: At the start of your turn, gain 1 coin for each Broken window currently on the board (minimum 1).
+
+### Active — Reckless Swing
+Break 1 of another player's windows. If that player has more Reputation tokens than you, Break 2 of their windows instead.
+
+### Active — Raiding Party
+Place your Clan marker on any location. Draw 2 resources, keep 1, discard the other.
+
+### Class Feature — Clan
+- Any player who uses a location occupied by your Clan must give you 2 coins before resolving their action.
+- The Clan remains in place until the end of your next turn.
+- If not relocated on your next turn, the Clan returns to your player area.
+
+**Custom components:** 1 Clan marker (player-coloured)
+
+---
+
+## 2. Ranger — Emberlyn Morishwood
+
+**Identity:** The Planner
+**Difficulty:** 1/5
+
+### Passive — Master of the Wilderness
+- At the start of your turn: Gather half your d6 roll (round down).
+- Always on: Whenever any Visitor is completed (by any player), Trade 1 (swap 1 of your resources with 1 from the Flea Market).
+
+### Active — Ambush
+Choose 2 Ambush cards from your hand and place them face-down on the board (one per location of your choice). When a player uses a location matching one of your face-down Ambush cards, you may flip the card and activate it. You may have up to 3 Ambush cards active at any time.
+
+### Active — Trick Shot
+Force a player to re-roll a die they just rolled.
+- If they roll higher (better): Refresh 1 Active token.
+- If they roll equal or lower: choose one — Break 1 of another player's windows, OR Launder 1 resource.
+
+### Class Feature — Ambushing
+- You cannot activate an Ambush card on the player currently holding the Night Watcher badge.
+- You may always wait to activate (no "must trigger immediately" rule).
+
+**Custom components:** Ambush card deck (Ranger-specific; deck size and contents TBD — Ambush cards reference specific locations)
+
+---
+
+## 3. Shaman — Mikael Spenrian
+
+**Identity:** The Patient
+**Difficulty:** 2/5
+
+### Passive — Dominion of the Elements
+At game start, roll all 4 Elemental dice. You may use each die's effect ONCE per game, on your turn, then discard that die. The result rolled determines the effect available (see Class Feature).
+
+### Active — Call Lightning
+Choose 1 player. That player must discard 2 resources from their Hoard (their choice). Then Draw 1 resource.
+
+### Active — Patience of Stone
+For each unused Elemental die still in your possession, choose one effect: Repair 1, Trade 1, Draw 1, or Forage 2. Each effect may only be chosen once per use of this ability.
+
+### Class Feature — Elemental Dice
+You have 4 special d6 dice. Each one is rolled once at game start. The face rolled defines its effect:
+- **1:** Draw 3 resources
+- **2:** Trade 5 with the Flea Market
+- **3:** Repair 2 windows
+- **4:** Refresh 2 Active tokens
+- **5:** Appraise 1 (look at top 4 of deck, keep 1)
+- **6:** Gain 1 additional action this turn
+
+Use one Elemental die per turn maximum. Discard after use. Each die can only be used once per game.
+
+**Custom components:** 4 Elemental dice (rolled once at game start; their face is the effect)
+
+---
+
+## 4. Sorcerer — Mathias Spellserve
+
+**Identity:** The Wildcard
+**Difficulty:** 2/5
+
+### Passive — Uncontrollable Magic
+Whenever you roll a die and keep a 6, immediately choose one bonus effect:
+- Refresh 1 Active token
+- Draw 2 resources
+- Trade 2 with the Flea Market
+- Steal 1 from a chosen player's Hoard
+- Appraise 2 (look at top 4 of deck, keep 2)
+
+### Active — Hot Streak!
+Name a resource type (Armament, Consumable, Trinket, or Trade Good). Draw 1 resource from the deck.
+- If it matches the type you named: go again (name a type, draw another).
+- When you fail (draw doesn't match): Break 1 of another player's windows.
+
+### Active — Reality Ripple
+Until the start of your next turn, you may re-roll any single die you roll up to twice, keeping the final result. If you didn't actually re-roll any die during this turn, Launder 4 resources.
+
+### Class Feature — Dice Rolling
+Your abilities trigger any time you roll a die — including Gather rolls, Clash rolls, Auction rolls, etc. The Sorcerer is the "die-rolling" class; many of their bonuses key off rolling.
+
+**Custom components:** None (standard d6 + Active tokens)
+
+---
+
+## 5. Monk — Jozin Kikim
+
+**Identity:** The Wanderer
+**Difficulty:** 3/5
+
+### Passive — Flow State
+- Gain 1 Momentum when sharing a location with another player during your turn (max 2 Momentum from this per turn).
+- Gain 2 Momentum when you complete a Visitor's order.
+
+### Active — Momentum Spend (no token cost; spend Momentum points instead)
+You may spend Momentum during your turn from this list (multiple spends per turn allowed if you have the Momentum):
+- **2 Momentum:** Draw 2 resources
+- **2 Momentum:** Trade 2 with the Flea Market
+- **4 Momentum:** Appraise 2 (look at top 4 of deck, keep 2)
+- **4 Momentum:** Break 1 or Steal 1
+- **7 Momentum:** Copy any face-up Professional currently in play and resolve it (without paying any associated costs of "visiting the Guildhall")
+- **7 Momentum:** Gain 1 Reputation per other player sharing a location with you this turn (max 3 Rep)
+
+### Class Feature — Momentum
+- The Monk does NOT have Active tokens. Their player board has a Momentum tracker (0–8) instead.
+- Maximum Momentum is 8.
+- Any effect that would Refresh an Active token grants the Monk 1 Momentum instead.
+- **At end of game:** Convert any unspent Momentum to coins, 1 coin per 1 Momentum. This is added to the Monk's coin total before final scoring.
+
+**Custom components:** Momentum tracker (0–8) on player board, replacing Active token slots
+
+---
+
+## 6. Rogue — Robyn Spichard
+
+**Identity:** The Swindler
+**Difficulty:** 4/5
+
+### Passive — No Honour Among Thieves
+- When you Steal, you may instead Heist: take a resource from a player's window (not just their Hoard), and replace it with a Counterfeit card from your hand.
+- Always on: Counterfeits in your hand may be placed in your own windows and sell normally to Visitors.
+
+### Active — Guild Contacts
+Auction 1 Stolen resource (Counterfeits excluded). If your d6 roll is 5 or higher, gain a matching Reputation token in addition to any granted by the resource's Rep icon.
+
+### Active — From the Shadows
+Place 1 Counterfeit from your hand into any window (yours or another player's). If placed in your own window, Draw 1 resource.
+
+### Class Feature — Counterfeit Cards
+- At game start, draw 4 Counterfeits from your shuffled Counterfeit deck (8 cards total).
+- Counterfeits sell normally to Visitors at their printed coin value (no Rep gained).
+- When a Counterfeit is sold OR used as part of a Visitor's order being completed, the buyer suffers the Counterfeit's "On return" effect immediately.
+- After a Counterfeit's return effect triggers, the card is placed at the bottom of your Counterfeit deck.
+- Counterfeits used to craft a Work Order are PERMANENTLY destroyed (do not return to your deck).
+- Replenish 1 Counterfeit (top of your deck to your hand) by visiting the Thieves' Guild or Tavern.
+- If you start your turn with 1 or fewer Counterfeits in hand, Draw 1 resource.
+- Counterfeits cannot be discarded via Report the Crime.
+
+### Counterfeit Deck (8 cards)
+| Card | Type | Value | On Return Effect |
+|---|---|---|---|
+| Sparkling Water | Consumable | $2 | Break 1 |
+| Assorted Seeds | Consumable | $1 | Gain 2 coins |
+| Back Door Key | Trinket | $1 | Trade 2 |
+| Fake Fur Harness | Armament | $2 | Steal 1 |
+| Fake Ring | Trinket | $2 | Launder 2 |
+| Literally Carrots | Trade Good | $2 | Draw 2 |
+| Orcish Bitter | Trade Good | $3 | Auction 1 |
+| Prop Sword | Armament | $3 | Refresh 1 Active |
+
+**Custom components:** 8-card Counterfeit deck (Rogue's personal deck)
+
+---
+
+## 7. Paladin — Jordain Tinkfast
+
+**Identity:** The Renowned
+**Difficulty:** 4/5
+
+### Passive — Honourable Trade
+Gain 1 additional Reputation token whenever you:
+- Resolve a Negotiate action at the Guildhall
+- Use Report the Crime at the Barracks (either option)
+- Complete a public Visitor's order
+
+### Active — Righteous Duel
+Name a player and declare a stake (a resource or coin amount). They name their stake. Both players roll d6. The Paladin adds the number of Renown Cards currently in their hand to their roll. Highest total wins both stakes. Tie: both stakes returned, no effect.
+
+### Active — Tales of Old (off-turn)
+Discard 1 Renown Card from your hand. Immediately resolve its Spend effect.
+
+### Class Feature — Renown
+- At game start, draw 4 cards from your shuffled Renown deck (10 cards total).
+- Each Renown Card has TWO effects: a **Held** effect (passive bonus while the card is in your hand) and a **Spend** effect (triggered only by Tales of Old, then the card is discarded).
+- Renown is NEVER replenished. Once you Spend a Renown Card, it's gone for the rest of the game.
+- Your hand of Renown Cards is private to you, but the count is public.
+
+### Renown Cards (10 total — player draws 4 at game start)
+
+| Card | Held | Spend |
+|---|---|---|
+| The Unbroken Siege | +1 to all Clash rolls | Free Righteous Duel (no Active token cost) |
+| The Merchant of Saltholm | Honourable Trade gains 2 Rep instead of 1 | Give 1 resource, gain 3 coins and 2 Rep |
+| The Reckoning at Duskreach | Gain 1 coin whenever any player uses the Thieves' Guild | Name a player; they give you 2 Hoard resources |
+| The Gates of Mirhollow | Gain 1 Rep whenever you Repair a window | Close 2 windows; gain 1 Rep per window closed |
+| The King's Errand | +1 coin per public Visitor completion | Use Town Crier without visiting Barracks (free action) |
+| The Forge of Ironpeak | Work Orders gain +2 bonus coins on completion | Complete a Work Order missing 1 resource |
+| The Council of Seven | Negotiate twice per Guildhall visit | Resolve a Negotiate with any willing player regardless of location |
+| The Shadow of Vel'sha | Gain 2 coins whenever you are Stolen from | Take 1 resource at random from each player's Hoard |
+| The Mercy of Thornwall | Report the Crime repairs 2 windows instead of all | Repair all windows free, gain 1 Rep |
+| The Last Stand at Greyveil | Re-roll any single die once per round, keep better result | Until your next turn, any Steal or Break targeting you redirects back onto the attacker (off-turn) |
+
+**Custom components:** 10-card Renown deck (Paladin's personal deck), player board has Renown card slots
+
+---
+
+## 8. Warlock — Kaelan Mortisbane
+
+**Identity:** The Manipulator
+**Difficulty:** 5/5
+
+### Passive — Master Manipulator
+- When a Pact you offer is **accepted**: gain 1 Reputation token.
+- When a Pact you offer is **refused**: gain 2 coins.
+- Always on: At the start of your turn, gain 1 coin for each Debt token currently on the board (across all players).
+
+### Active — Dark Bargain (off-turn)
+Offer any player a benefit from your Bargain Card (see below).
+- If they **accept**: deliver the chosen benefit and place 1 Debt token on their player board.
+- If they **refuse**: gain 2 coins (this is in addition to the passive — total 4 coins).
+- This can be triggered on another player's turn.
+
+### Active — The Harvest
+Collect all Debt tokens currently on the board. For each Debt token collected from a player, that player must pay you either 1 resource from their Hoard OR 2 coins (their choice). Then return the Debt tokens to your supply.
+
+### Class Feature — Pacts and Debts
+- Debt tokens are placed on player boards when they accept a Pact.
+- Players may voluntarily pay off 1 Debt token at the start of their turn (before taking any actions) for 2 coins per Debt cleared.
+- Debt tokens have no negative effect until The Harvest is used or voluntarily paid off.
+- The Warlock starts the game with 6 Debt tokens available to place.
+
+### Bargain Card — Valid Pact Offers
+When the Warlock offers a Pact, they choose ONE benefit from this list to deliver if accepted:
+- Pay them 2–4 coins from your supply
+- Give them 1 resource from your Hoard
+- Draw 2 resources on their behalf (target player keeps them)
+- Repair 1 of their windows
+- Protect them from the next Steal or Break this round
+
+**Custom components:** Debt tokens (6, Warlock-coloured), Bargain Card (reference card for valid offers), player boards of other players need space for Debt tokens
+
+---
+
+## Implementation notes (for the app)
+
+### V1 Scope (build first)
+For the first playable version, support only the **starter classes**: Barbarian, Ranger, Monk, Sorcerer. These have simpler component needs:
+- Barbarian: 1 Clan marker per player
+- Ranger: Ambush cards (need to be designed/listed — currently undefined deck)
+- Monk: Momentum tracker (0–8) on player board
+- Sorcerer: nothing extra beyond standard
+
+### V2 Scope (add later)
+Add Rogue, Paladin, Warlock once core is working. These need:
+- Rogue: 8-card Counterfeit deck (player-specific)
+- Paladin: 10-card Renown deck (player-specific)
+- Warlock: Debt tokens, Bargain Card reference card
+
+### Shaman scope
+Shaman should be implementable from v1 — only needs 4 special d6 dice rolled at game start. But its complexity (multiple rolled-once dice + Patience of Stone modal options) might warrant pushing to v2.
+
+### Class card UI
+Each player needs a visible class card showing:
+- Class name & character name
+- Passive ability text
+- Active 1 text + button to spend an Active token to use
+- Active 2 text + button to spend an Active token to use
+- Class Feature text
+- Custom component zones (Counterfeit hand for Rogue, Renown hand for Paladin, Momentum tracker for Monk, etc.)
+
+### Active token UI per class
+- Barbarian, Ranger, Shaman, Sorcerer, Rogue, Paladin, Warlock: 2 Active tokens on player board
+- Monk: NO Active tokens; replaced by Momentum tracker (0–8)
+
+### Trust the players
+The app doesn't enforce class ability rules. The class card shows the ability text; the player reads it and executes manually (drag cards, click buttons, increment counters). This is intentional for playtest — keeps the app simple and the rules flexible during iteration.
