@@ -6,17 +6,21 @@ interface Props {
   color?: string
   textColor?: string
   icon?: string
+  image?: string
   min?: number
   max?: number
 }
 
 export function TokenCounter({
   label, value, onIncrement, onDecrement,
-  color = 'bg-parchment-800/30', textColor = 'text-parchment-400', icon, min = 0, max = 999,
+  color = 'bg-parchment-800/30', textColor = 'text-parchment-400', icon, image, min = 0, max = 999,
 }: Props) {
   return (
     <div className="flex items-center gap-1">
-      <span className={`text-xs font-semibold min-w-[2rem] ${textColor}`}>{label}</span>
+      {image
+        ? <img src={image} alt={label} className="w-7 h-7 rounded-full border border-parchment-700/40 flex-shrink-0" />
+        : <span className={`text-xs font-semibold min-w-[2rem] ${textColor}`}>{label}</span>
+      }
       <div className={`flex items-center gap-1 rounded-full px-2 py-0.5 ${color}`}>
         <button
           onClick={onDecrement}

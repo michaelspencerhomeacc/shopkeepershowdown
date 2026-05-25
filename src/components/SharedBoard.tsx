@@ -4,8 +4,17 @@ import type { Location, Player, GameState, DuelStake, ResourceCard } from '../ty
 import { LocationActionPanel, DrawnCardsToast } from './LocationActionPanel'
 import { SellPhase } from './SellPhase'
 import { ResourceCardMini } from './ResourceCardMini'
-import { VisitorCardMini } from './VisitorCardMini'
-import { RecipeDisplay } from './ResourceCardTile'
+import { RecipeDisplay, ResourceCardTile } from './ResourceCardTile'
+import { CardImage } from './CardImage'
+import { parseRequirements } from '../utils/requirements'
+
+const DEMAND_COLORS: Record<string, string> = {
+  ARM: 'bg-orange-600 text-orange-100',
+  CON: 'bg-blue-600 text-blue-100',
+  TRI: 'bg-green-600 text-green-100',
+  TRG: 'bg-pink-600 text-pink-100',
+  ANY: 'bg-parchment-600 text-parchment-100',
+}
 
 export const LOCATIONS: { id: Location; label: string }[] = [
   { id: 'guildhall',     label: 'Guildhall' },
@@ -41,8 +50,11 @@ export function SharedBoard() {
     trickShotPending, useTrickShot, passTrickShot,
     trickShotBonusPending, resolveTrickShotBonus,
     rangerVisitorTradePending, dismissRangerVisitorTrade, resolveRangerVisitorTrade,
-    fleaMarket,
-    townCrierPeek, completeTownCrier, activeVisitors,
+    fleaMarket, buyFromFleaMarket, refillFleaMarket,
+    resourceDeck, resourceDiscard, drawResource,
+    workOrderDeck,
+    townCrierPeek, completeTownCrier, activeVisitors, visitorDemandRemaining,
+    professionalSlots,
   } = useGameStore()
 
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
@@ -50,11 +62,15 @@ export function SharedBoard() {
   const [ambushBreakWinIdx, setAmbushBreakWinIdx] = useState<number | null>(null)
   // Clan toll gate: set before opening the action panel; null = no gate active
   const [clanGate, setClanGate] = useState<{ barbarianId: string; location: Location } | null>(null)
+  // Clan toll is committed only when the player completes an action, not when they open the panel
+  const [pendingClanToll, setPendingClanToll] = useState<{ barbarianId: string; locLabel: string } | null>(null)
   // Round transition toast
   const [roundToast, setRoundToast] = useState<number | null>(null)
   // Town Crier picker (used by Barracks action AND rn07 Paladin card)
   const [crierPlaceId, setCrierPlaceId] = useState('')
   const [crierSlotIdx, setCrierSlotIdx] = useState(0)
+  // Empty-windows warning before ending turn
+  const [showEmptyWindowsWarn, setShowEmptyWindowsWarn] = useState(false)
 
   // Hoard overflow: first player with more than 8 cards must discard before play continues
   const overflowPlayer = players.find(p => p.hoard.length > 8) ?? null
@@ -90,7 +106,6 @@ export function SharedBoard() {
   function handleLocationClick(locId: Location) {
     if (locationsUsedThisTurn.includes(locId)) return
     if (turnOver) return
-    // Check for a Clan marker at this location before opening the action panel
     const clanOwner = players.find(
       p => p.classId === 'barbarian' && p.clanLocation === locId && p.id !== currentTurnPlayerId
     )
@@ -131,7 +146,7 @@ export function SharedBoard() {
                 ×
               </button>
             </div>
-            <SellPhase onDone={() => setSellPhaseOpen(false)} />
+            <SellPhase onDone={() => { useGameStore.getState().completeSellPhase(); setSellPhaseOpen(false) }} />
           </div>
         </div>
       )}
@@ -171,18 +186,57 @@ export function SharedBoard() {
           )}
         </div>
         <button
-          onClick={() => { setSelectedLocation(null); endTurn() }}
+          onClick={() => {
+            const emptyNormal = currentPlayer?.windows.some(w => w.status === 'normal' && !w.card) ?? false
+            if (emptyNormal) { setShowEmptyWindowsWarn(true) } else { setSelectedLocation(null); endTurn() }
+          }}
           className="btn-primary text-xs px-3 py-1.5 font-semibold"
         >
           End Turn →
         </button>
       </div>
 
-      <div className="panel p-1">
+      <div className="flex gap-2 items-stretch">
+
+      {/* Professionals sidebar */}
+      {professionalSlots.some(p => p !== null) && (
+        <div className="panel p-2 flex flex-col gap-2 w-[420px] flex-shrink-0">
+          <div className="text-sm font-bold text-parchment-400 uppercase tracking-widest text-center">Professionals</div>
+          {professionalSlots.map((prof, i) => {
+            if (!prof) return (
+              <div key={i} className="flex-1 rounded border border-parchment-800/30 flex items-center justify-center text-[9px] text-parchment-700 italic">
+                Slot {i + 1} — empty
+              </div>
+            )
+            return (
+              <div key={prof.id} className="flex-1 min-h-0 rounded-lg overflow-hidden border border-parchment-700/40 flex group relative">
+                <div className="bg-ink-800/95 px-3 py-2 flex flex-col justify-center gap-3 flex-1 min-w-0">
+                  <div className="text-base font-bold text-parchment-100 leading-tight">{prof.name}</div>
+                  <div className="text-sm text-parchment-300 leading-snug">{prof.effect}</div>
+                  <div className="text-xs text-parchment-500 italic">"{prof.flavour}"</div>
+                </div>
+                <img src={prof.imageFile} alt={prof.name} className="w-[140px] object-cover object-top self-stretch flex-shrink-0" />
+                {/* Hover full detail — pops right since panel is on the left */}
+                <div className="absolute z-50 left-full ml-2 top-0 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity w-56">
+                  <div className="bg-ink-800 border border-parchment-700/40 rounded-lg p-2 shadow-2xl space-y-1.5">
+                    <img src={prof.imageFile} alt={prof.name} className="w-full rounded" />
+                    <div className="text-sm font-display text-parchment-100">{prof.name}</div>
+                    <div className="text-xs text-parchment-200 leading-relaxed">{prof.effect}</div>
+                    <div className="text-xs text-parchment-500 italic">"{prof.flavour}"</div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="panel p-0 flex-1 min-w-0 overflow-hidden">
+        <div className="text-xl font-extrabold text-parchment-400 uppercase tracking-widest text-center pt-2 pb-6">Town Board</div>
         {/* Board image */}
         <div
-          className="relative mx-auto rounded-lg overflow-hidden select-none"
-          style={{ height: 'min(55vh, 550px)', aspectRatio: '2000 / 1414' }}
+          className="relative w-full overflow-hidden select-none"
+          style={{ aspectRatio: '2000 / 1414' }}
         >
           <img
             src="/cards/board/Main.png"
@@ -195,113 +249,255 @@ export function SharedBoard() {
               const pawnsHere = pawns.filter(pw => pw.location === loc.id)
               const absent    = players.filter(p => !pawns.some(pw => pw.playerId === p.id && pw.location === loc.id))
               const isSelected = selectedLocation === loc.id
+              const isUsed = locationsUsedThisTurn.includes(loc.id)
               const clanOwner = players.find(p => p.classId === 'barbarian' && p.clanLocation === loc.id)
+              const canUse = !isUsed && !turnOver // used for cursor styling
 
               return (
-                <div
+                <button
                   key={loc.id}
-                  className={`relative flex flex-col justify-between p-2 transition-all
+                  type="button"
+                  onClick={() => handleLocationClick(loc.id)}
+                  disabled={isUsed || turnOver}
+                  className={`relative transition-all overflow-hidden text-left
+                    ${isUsed ? 'opacity-50 cursor-not-allowed' : canUse ? 'cursor-pointer hover:bg-white/5' : 'cursor-not-allowed'}
                     ${isSelected ? 'ring-2 ring-inset ring-gold-400/80 bg-gold-400/10' : ''}
                     ${clanOwner ? 'ring-1 ring-inset ring-red-500/50 bg-red-900/10' : ''}`}
                 >
+                  {/* Location name */}
+                  <div className="absolute top-1.5 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+                    <div className={`px-3 py-1 rounded-full text-sm font-bold shadow whitespace-nowrap ${
+                      isUsed
+                        ? 'bg-ink-900/70 text-parchment-600'
+                        : 'bg-amber-950/85 text-amber-100 border border-amber-700/50'
+                    }`}>
+                      {isUsed ? `✓ ${loc.label}` : loc.label}
+                    </div>
+                  </div>
+
                   {/* Clan marker */}
                   {clanOwner && (
-                    <div className="absolute top-1 left-1 z-10" title={`${clanOwner.name}'s Clan — costs 2 coins to use`}>
-                      <img src="/cards/tokens/Clan.png" alt="Clan marker" className="w-8 h-8 rounded-full border-2 border-red-500/80 shadow-lg" />
+                    <div className="absolute top-7 left-1 z-10" title={`${clanOwner.name}'s Clan — costs 2 coins to use`}>
+                      <img src="/cards/tokens/Clan.png" alt="Clan marker" className="w-7 h-7 rounded-full border-2 border-red-500/80 shadow-lg" />
                     </div>
                   )}
-                  <div className="flex flex-wrap gap-1 justify-end">
+
+                  {/* Placed pawns — top right */}
+                  <div className="absolute top-6 right-1 flex flex-col gap-0.5 items-end">
                     {pawnsHere.map(pw => {
                       const player = players.find(p => p.id === pw.playerId)
                       if (!player) return null
                       return (
                         <button
                           key={pw.playerId}
-                          onClick={() => movePawn(pw.playerId, null)}
-                          className="w-9 h-9 rounded-full overflow-hidden border-2 border-white/70 shadow-lg hover:scale-110 active:scale-95 transition-transform"
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); movePawn(pw.playerId, null) }}
+                          className="w-8 h-8 rounded-full overflow-hidden border-2 border-white/70 shadow-lg hover:scale-110 active:scale-95 transition-transform"
                           title={`${player.name} — click to remove from ${loc.label}`}
                         >
-                          <img
-                            src={markerSrc(player.classId)}
-                            alt={player.name}
-                            className="w-full h-full object-cover"
-                          />
+                          <img src={markerSrc(player.classId)} alt={player.name} className="w-full h-full object-cover" />
                         </button>
                       )
                     })}
                   </div>
 
-                  {absent.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {absent.map(player => (
-                        <button
-                          key={player.id}
-                          onClick={() => togglePawn(player.id, loc.id)}
-                          className="w-6 h-6 rounded-full overflow-hidden border border-white/40 shadow opacity-50 hover:opacity-90 hover:scale-105 active:scale-95 transition-all"
-                          title={`Move ${player.name} to ${loc.label}`}
-                        >
-                          <img
-                            src={markerSrc(player.classId)}
-                            alt={player.name}
-                            className="w-full h-full object-cover"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                  {/* Ghost pawns — click to place */}
+                  <div className="absolute top-6 right-10 flex flex-col gap-0.5 items-end">
+                    {absent.map(player => (
+                      <button
+                        key={player.id}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); togglePawn(player.id, loc.id) }}
+                        className="w-5 h-5 rounded-full overflow-hidden border border-white/40 shadow opacity-50 hover:opacity-90 hover:scale-105 active:scale-95 transition-all"
+                        title={`Move ${player.name} to ${loc.label}`}
+                      >
+                        <img src={markerSrc(player.classId)} alt={player.name} className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </button>
               )
             })}
           </div>
         </div>
 
-        {/* Location action buttons */}
-        <div className="flex gap-1 mt-1.5 flex-wrap justify-center">
-          {LOCATIONS.map(loc => {
-            const used = locationsUsedThisTurn.includes(loc.id)
-            const isSelected = selectedLocation === loc.id
-            const disabled = used || turnOver
-
-            return (
-              <button
-                key={loc.id}
-                onClick={() => handleLocationClick(loc.id)}
-                disabled={disabled}
-                className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-all border ${
-                  used
-                    ? 'bg-ink-900/60 border-parchment-800/20 text-parchment-700 cursor-not-allowed'
-                    : isSelected
-                      ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                      : 'bg-ink-800 border-parchment-700/30 text-parchment-400 hover:border-parchment-500 hover:text-parchment-200'
-                }`}
-                title={used ? `${loc.label} already used this turn` : undefined}
-              >
-                {used ? `✓ ${loc.label}` : loc.label}
-              </button>
-            )
-          })}
-        </div>
-
         {turnOver && (
-          <div className="text-center text-xs text-parchment-500 mt-1.5">
+          <div className="text-center text-xs text-parchment-500 py-1">
             All actions used — click <span className="text-gold-400 font-semibold">End Turn →</span> above
           </div>
         )}
       </div>
 
-      {/* Action panel — fixed overlay at bottom of viewport */}
+      {/* Visitor sidebar */}
+      {activeVisitors.some(v => v !== null) && (
+        <div className="panel p-2 flex flex-col gap-2 w-[420px] flex-shrink-0">
+          <div className="text-sm font-bold text-parchment-400 uppercase tracking-widest text-center">Visitors</div>
+          {activeVisitors.map((v, i) => {
+            if (!v) return (
+              <div key={i} className="flex-1 rounded border border-parchment-800/30 flex items-center justify-center text-[9px] text-parchment-700 italic">
+                Slot {i + 1} — empty
+              </div>
+            )
+            const remaining = visitorDemandRemaining[v.id]
+            const remainingEntries = remaining
+              ? (Object.entries(remaining) as [string, number][]).filter(([, n]) => n > 0)
+              : []
+            const fulfilled = remainingEntries.length === 0
+            return (
+              <div key={v.id} className={`flex-1 min-h-0 rounded-lg overflow-hidden border flex ${fulfilled ? 'border-green-500/60' : 'border-parchment-700/40'}`}>
+                <img src={v.imageFile} alt={v.name} className="w-[240px] object-contain self-stretch flex-shrink-0 bg-ink-900" />
+                <div className="bg-ink-800/95 px-3 py-2 flex flex-col justify-center gap-3 flex-1 min-w-0">
+                  <div>
+                    <div className="text-base font-bold text-parchment-100 leading-tight">{v.name}</div>
+                    {v.title && <div className="text-sm text-parchment-500 italic leading-tight mt-0.5">{v.title}</div>}
+                  </div>
+                  {fulfilled ? (
+                    <div className="text-base font-bold text-green-400">✓ Fulfilled!</div>
+                  ) : (
+                    <div>
+                      <div className="text-xs text-parchment-500 uppercase tracking-wide mb-1.5">Still needs</div>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {remainingEntries.map(([type, n]) => (
+                          <span key={type} className={`text-sm font-bold px-3 py-1 rounded-lg ${DEMAND_COLORS[type] ?? 'bg-ink-700 text-parchment-300'}`}>
+                            {n} {type}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      </div>{/* end flex row */}
+
+      {/* Flea Market row */}
+      <div className="panel p-3 flex items-center gap-4">
+
+        {/* Left — Resource Deck + Discard */}
+        <div className="flex flex-col items-center gap-3 flex-shrink-0">
+          <div className="flex gap-3">
+            <div className="text-center">
+              <div
+                className="card w-[80px] h-[112px]"
+              >
+                <CardImage src="/cards/resources/Card Back.png" alt="Resource deck" className="w-full h-full" fallbackText="Resource Deck" />
+              </div>
+              <div className="text-xs text-parchment-500 mt-1">{resourceDeck.length} left</div>
+            </div>
+            <div className="text-center">
+              {resourceDiscard.length > 0 ? (
+                <ResourceCardTile card={resourceDiscard[0]} size="sm" />
+              ) : (
+                <div className="zone w-[80px] h-[112px] flex items-center justify-center text-parchment-600 text-xs">empty</div>
+              )}
+              <div className="text-xs text-parchment-500 mt-1">{resourceDiscard.length} discard</div>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-parchment-400 uppercase tracking-widest">Resource Deck</span>
+        </div>
+
+        {/* Centre — Flea Market */}
+        <div className="flex flex-col flex-1 items-center gap-2">
+          <div className="flex justify-center gap-4">
+            {fleaMarket.map((card, i) =>
+              card ? (
+                <ResourceCardTile key={card.id} card={card} size="md" />
+              ) : (
+                <div key={i} className="zone w-[100px] h-[140px] flex items-center justify-center text-parchment-700 text-xs">—</div>
+              )
+            )}
+          </div>
+          <h4 className="text-base font-bold text-parchment-300 uppercase tracking-widest text-center mt-1">Flea Market</h4>
+        </div>
+
+        {/* Right — Work Orders */}
+        <div className="flex flex-col items-center gap-3 flex-shrink-0">
+          <div className="card w-[80px] h-[112px]">
+            <CardImage src="/cards/workorders/Card Back.png" alt="Work Order deck" className="w-full h-full" fallbackText="Work Orders" />
+          </div>
+          <div className="text-center">
+            <div className="text-xs font-bold text-parchment-400 uppercase tracking-widest">Work Orders</div>
+            <div className="text-xs text-parchment-500">{workOrderDeck.length} remaining</div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* Empty-windows warning modal */}
+      {showEmptyWindowsWarn && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60">
+          <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 space-y-3 text-center">
+            <div className="text-base font-display font-bold text-amber-300">⚠ Empty Windows</div>
+            <div className="text-xs text-parchment-300">
+              {currentPlayer?.windows.filter(w => w.status === 'normal' && !w.card).length ?? 0} of your shop windows {
+                (currentPlayer?.windows.filter(w => w.status === 'normal' && !w.card).length ?? 0) === 1 ? 'is' : 'are'
+              } empty. Customers can't buy from an empty window!
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowEmptyWindowsWarn(false)}
+                className="flex-1 bg-ink-700 hover:bg-ink-600 border border-parchment-700/40 text-parchment-200 text-xs px-3 py-1.5 rounded-lg transition-colors"
+              >
+                ← Go Back
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowEmptyWindowsWarn(false); setSelectedLocation(null); endTurn() }}
+                className="flex-1 btn-primary text-xs px-3 py-1.5"
+              >
+                End Anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action panel — centered modal overlay */}
       {selectedLocation && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 max-h-[60vh] overflow-y-auto shadow-2xl border-t-2 border-gold-500/40">
-          <LocationActionPanel
-            location={selectedLocation}
-            onClose={() => setSelectedLocation(null)}
-            onAction={() => {
-              // called by each action button — lock the location and count the action
-              const loc = selectedLocation
-              useGameStore.getState().useTurnAction(loc)
-              setSelectedLocation(null)
-            }}
-          />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70"
+          onClick={() => { setSelectedLocation(null); setPendingClanToll(null) }}
+        >
+          <div
+            className="bg-ink-900 rounded-xl border border-gold-500/30 shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <LocationActionPanel
+              location={selectedLocation}
+              onClose={() => { setSelectedLocation(null); setPendingClanToll(null) }}
+              onAction={() => {
+                const loc = selectedLocation
+                // Charge deferred Clan toll only now that an action is being taken
+                if (pendingClanToll) {
+                  const visitor = players.find(p => p.id === currentTurnPlayerId)
+                  const barb = players.find(p => p.id === pendingClanToll.barbarianId)
+                  adjustCoins(currentTurnPlayerId, -2)
+                  adjustCoins(pendingClanToll.barbarianId, 2)
+                  addLog(`${visitor?.name} paid ${barb?.name}'s Clan toll at ${pendingClanToll.locLabel} — 2 coins transferred.`, currentTurnPlayerId)
+                  setPendingClanToll(null)
+                }
+                useGameStore.getState().useTurnAction(loc)
+                setSelectedLocation(null)
+              }}
+              onConsumeAction={() => {
+                // Also charge toll on consume (multi-step actions like gather)
+                if (pendingClanToll) {
+                  const visitor = players.find(p => p.id === currentTurnPlayerId)
+                  const barb = players.find(p => p.id === pendingClanToll.barbarianId)
+                  adjustCoins(currentTurnPlayerId, -2)
+                  adjustCoins(pendingClanToll.barbarianId, 2)
+                  addLog(`${visitor?.name} paid ${barb?.name}'s Clan toll at ${pendingClanToll.locLabel} — 2 coins transferred.`, currentTurnPlayerId)
+                  setPendingClanToll(null)
+                }
+                useGameStore.getState().useTurnAction(selectedLocation)
+              }}
+            />
+          </div>
         </div>
       )}
 
@@ -381,14 +577,12 @@ export function SharedBoard() {
           players={players}
           currentPlayerId={currentTurnPlayerId}
           onProceed={() => {
-            const visitor = players.find(p => p.id === currentTurnPlayerId)
-            const barb = players.find(p => p.id === clanGate.barbarianId)
+            // Don't charge yet — defer to when the player actually completes an action
             const locLabel = LOCATIONS.find(l => l.id === clanGate.location)?.label ?? clanGate.location
-            adjustCoins(currentTurnPlayerId, -2)
-            adjustCoins(clanGate.barbarianId, 2)
-            addLog(`${visitor?.name} paid ${barb?.name}'s Clan toll at ${locLabel} — 2 coins transferred.`, currentTurnPlayerId)
+            setPendingClanToll({ barbarianId: clanGate.barbarianId, locLabel })
+            const loc = clanGate.location
             setClanGate(null)
-            setSelectedLocation(clanGate.location)
+            setSelectedLocation(loc)
           }}
           onLeave={() => setClanGate(null)}
         />
@@ -572,43 +766,99 @@ export function SharedBoard() {
         if (!crierPlayer) return null
         return (
           <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
-            <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-lg w-full mx-4 space-y-4">
+            <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-2xl w-full mx-4 space-y-4 max-h-[90vh] overflow-y-auto">
               <div className="text-base font-display font-bold text-gold-300 text-center">📯 Town Crier</div>
               <div className="text-xs text-parchment-400 text-center">{crierPlayer.name} — choose a visitor to place on the board:</div>
 
-              {/* Visitor card image picker */}
+              {/* Peeked visitors — landscape cards with coloured demand */}
               <div className="space-y-1.5">
                 <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">Peeked visitors</div>
-                <div className="flex gap-3 overflow-x-auto pb-1">
-                  {townCrierPeek.cards.map(c => (
-                    <VisitorCardMini
-                      key={c.id}
-                      card={c}
-                      size="lg"
-                      selected={crierPlaceId === c.id}
-                      onClick={() => setCrierPlaceId(c.id)}
-                    />
-                  ))}
+                <div className="space-y-2">
+                  {townCrierPeek.cards.map(c => {
+                    const req = parseRequirements(c.demand)
+                    const demandEntries = (Object.entries(req) as [string, number][]).filter(([, n]) => n > 0)
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setCrierPlaceId(c.id)}
+                        className={`flex w-full rounded-lg overflow-hidden border-2 transition-all text-left ${
+                          crierPlaceId === c.id
+                            ? 'border-gold-400 shadow-md shadow-gold-400/20'
+                            : 'border-parchment-700/40 hover:border-parchment-400'
+                        }`}
+                      >
+                        <img src={c.imageFile} alt={c.name} className="w-44 flex-shrink-0 object-cover self-stretch" />
+                        <div className="flex-1 bg-ink-800/95 px-3 py-2.5 space-y-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded tracking-wide flex-shrink-0 ${c.size === 'Small' ? 'bg-sky-700/80 text-sky-200' : 'bg-violet-700/80 text-violet-200'}`}>{c.size}</span>
+                            <span className="text-sm font-semibold text-parchment-100 leading-tight truncate">{c.name}</span>
+                          </div>
+                          {c.title && <div className="text-[10px] text-parchment-400 italic leading-tight truncate">{c.title}</div>}
+                          <div className="flex gap-1 flex-wrap pt-0.5">
+                            {demandEntries.map(([type, n]) => (
+                              <span key={type} className={`text-xs font-bold px-2 py-0.5 rounded ${DEMAND_COLORS[type] ?? 'bg-ink-700 text-parchment-300'}`}>
+                                {n} {type}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        {crierPlaceId === c.id && (
+                          <div className="flex items-center px-2.5 bg-gold-500/10 flex-shrink-0">
+                            <span className="text-gold-400 text-lg">✓</span>
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
-              {/* Slot selector */}
+              {/* Replace slot — mini visitor cards with remaining demand */}
               <div className="space-y-1.5">
                 <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">Replace visitor slot</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {activeVisitors.map((v, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setCrierSlotIdx(i)}
-                      className={`text-xs px-2 py-1 rounded border transition-colors ${
-                        crierSlotIdx === i
-                          ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                          : 'bg-ink-700 border-parchment-700/30 text-parchment-300'
-                      }`}
-                    >
-                      Slot {i + 1}{v ? ` — ${v.name}` : ' (empty)'}
-                    </button>
-                  ))}
+                <div className="flex gap-2">
+                  {activeVisitors.map((v, i) => {
+                    const remaining = v ? visitorDemandRemaining[v.id] : null
+                    const remainingEntries = remaining
+                      ? (Object.entries(remaining) as [string, number][]).filter(([, n]) => n > 0)
+                      : []
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setCrierSlotIdx(i)}
+                        className={`flex-1 rounded-lg overflow-hidden border-2 transition-all text-left ${
+                          crierSlotIdx === i
+                            ? 'border-gold-400 shadow-md shadow-gold-400/20'
+                            : 'border-parchment-700/40 hover:border-parchment-400'
+                        }`}
+                      >
+                        {v ? (
+                          <>
+                            <img src={v.imageFile} alt={v.name} className="w-full h-36 object-cover object-top" />
+                            <div className="bg-ink-800/95 px-1.5 py-1 space-y-0.5">
+                              <div className="text-[9px] font-semibold text-parchment-100 truncate leading-tight">{v.name}</div>
+                              <div className="flex gap-0.5 flex-wrap">
+                                {remainingEntries.length > 0
+                                  ? remainingEntries.map(([type, n]) => (
+                                      <span key={type} className={`text-[7px] font-bold px-1 py-0.5 rounded ${DEMAND_COLORS[type] ?? 'bg-ink-700 text-parchment-300'}`}>
+                                        {n} {type}
+                                      </span>
+                                    ))
+                                  : <span className="text-[7px] text-green-400 font-semibold">✓ Fulfilled</span>
+                                }
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="h-[72px] flex items-center justify-center bg-ink-800/40 text-[9px] text-parchment-600 italic">
+                            Slot {i + 1}<br />(empty)
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -981,7 +1231,7 @@ function ClanTollModal({
           </div>
           <div className="text-[10px] text-parchment-500 mt-2 leading-relaxed">
             You must pay <span className="text-parchment-200 font-semibold">{barb?.name} 2 coins</span> to use
-            this location. 2 coins will be deducted automatically.
+            this location. The toll is charged when you take an action — you can still back out for free.
           </div>
           {!canAfford && (
             <div className="text-[10px] text-red-400 mt-1.5 font-semibold">
@@ -1741,18 +1991,22 @@ function TrickShotBonusModal({
             <span className="text-[10px] font-semibold text-parchment-300">Break 1 window for a player you didn't target</span>
           </label>
           {choice === 'break' && (
-            <select
-              value={selectedWindowId}
-              onChange={e => setSelectedWindowId(e.target.value)}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full mt-1"
-            >
-              <option value="">— pick a window —</option>
+            <div className="flex flex-wrap gap-1 mt-1">
               {breakableWindows.map(w => (
-                <option key={w.windowId} value={w.windowId}>
-                  {w.playerName} — Window {w.idx + 1}
-                </option>
+                <button
+                  key={w.windowId}
+                  type="button"
+                  onClick={() => setSelectedWindowId(w.windowId)}
+                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                    selectedWindowId === w.windowId
+                      ? 'bg-red-600/30 border-red-400 text-red-200'
+                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
+                  }`}
+                >
+                  {w.playerName} · Win {w.idx + 1}
+                </button>
               ))}
-            </select>
+            </div>
           )}
         </div>
         <button
@@ -1788,28 +2042,28 @@ function RangerVisitorTradeModal({
 
   return (
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
-      <div className="bg-ink-900 border-2 border-emerald-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 space-y-3">
+      <div className="bg-ink-900 border-2 border-emerald-500/60 rounded-xl p-6 shadow-2xl max-w-2xl w-full mx-4 space-y-4">
         <div className="text-center">
-          <div className="text-base font-display font-bold text-emerald-300">🎯 Visitor Trade</div>
-          <div className="text-xs text-parchment-400 mt-1">
+          <div className="text-lg font-display font-bold text-emerald-300">🎯 Visitor Trade</div>
+          <div className="text-sm text-parchment-400 mt-1">
             A Visitor was just satisfied. Trade 1 from your hoard with the Flea Market.
           </div>
         </div>
 
         {ranger.hoard.length === 0 ? (
-          <div className="text-[10px] text-parchment-500 italic text-center">Your hoard is empty — nothing to trade.</div>
+          <div className="text-sm text-parchment-500 italic text-center">Your hoard is empty — nothing to trade.</div>
         ) : fleaOptions.length === 0 ? (
-          <div className="text-[10px] text-parchment-500 italic text-center">Flea Market is empty — nothing to receive.</div>
+          <div className="text-sm text-parchment-500 italic text-center">Flea Market is empty — nothing to receive.</div>
         ) : (
-          <div className="space-y-2.5">
+          <div className="space-y-4">
             <div>
-              <div className="text-[9px] font-semibold text-parchment-400 uppercase tracking-wide mb-1">Give from hoard:</div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="text-xs font-semibold text-parchment-400 uppercase tracking-wide mb-2">Give from hoard:</div>
+              <div className="flex flex-wrap gap-2">
                 {ranger.hoard.map(c => (
                   <ResourceCardMini
                     key={c.id}
                     card={c}
-                    size="sm"
+                    size="lg"
                     selected={playerCardId === c.id}
                     onClick={() => setPlayerCardId(prev => prev === c.id ? null : c.id)}
                   />
@@ -1817,13 +2071,13 @@ function RangerVisitorTradeModal({
               </div>
             </div>
             <div>
-              <div className="text-[9px] font-semibold text-parchment-400 uppercase tracking-wide mb-1">Take from Flea Market:</div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="text-xs font-semibold text-parchment-400 uppercase tracking-wide mb-2">Take from Flea Market:</div>
+              <div className="flex flex-wrap gap-2">
                 {fleaOptions.map(({ c, i }) => (
                   <ResourceCardMini
                     key={i}
                     card={c!}
-                    size="sm"
+                    size="lg"
                     selected={fleaIdx === i}
                     onClick={() => setFleaIdx(prev => prev === i ? null : i)}
                   />
@@ -1833,15 +2087,15 @@ function RangerVisitorTradeModal({
           </div>
         )}
 
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <button
             onClick={() => onTrade(playerCardId!, fleaIdx!)}
             disabled={!canTrade}
-            className="btn-primary flex-1 text-xs py-1.5 disabled:opacity-50"
+            className="btn-primary flex-1 text-sm py-2 disabled:opacity-50"
           >
             Trade 1
           </button>
-          <button onClick={onSkip} className="btn-secondary flex-1 text-xs py-1.5">
+          <button onClick={onSkip} className="btn-secondary flex-1 text-sm py-2">
             Skip
           </button>
         </div>

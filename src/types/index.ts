@@ -227,6 +227,8 @@ export interface GameState {
   shamanCallLightning: { shamanId: string; targetId: string } | null
   /** Counts completed Negotiate trades this turn (rn01 Council of Seven allows 2) */
   negotiatesCompletedThisTurn: number
+  /** True once Polite Promoter flea-market reset is used this turn — prevents re-use on panel close/reopen */
+  politePromoterResetUsed: boolean
   /** Extra location actions granted this turn (e.g. Shaman elemental die face 6) */
   bonusActionsThisTurn: number
 

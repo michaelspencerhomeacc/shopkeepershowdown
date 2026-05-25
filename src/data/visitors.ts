@@ -2,11 +2,11 @@ import type { VisitorCard } from '../types'
 
 // Demands use the same resource type codes as resource cards:
 //   ARM=Armament  CON=Consumable  TRI=Trinket  TRG=Trade Good
-// Icon colours on the cards: orange=ARM, green=CON, blue=TRI, pink=TRG
+// Icon colours on the cards: orange=ARM, blue=CON, green=TRI, pink=TRG
 export const VISITOR_CARDS: VisitorCard[] = [
   { id: 'v01', name: 'Alianna Lunagrove',   title: 'The Villager',            demand: '3 TRG',               size: 'Small', imageFile: '/cards/visitors/Alianna Lunagrove - Small.png' },
-  { id: 'v02', name: 'Barry Cycez',         title: 'The Collector',           demand: '5 CON',               size: 'Large', imageFile: '/cards/visitors/Barry Cycez - Large.png' },
-  { id: 'v03', name: 'Bruceland Whisper',   title: 'The Half-Orc',            demand: '1 ARM, 1 CON, 1 TRG', size: 'Small', imageFile: '/cards/visitors/Bruceland Whisper - Small.png' },
+  { id: 'v02', name: 'Barry Cycez',         title: 'The Collector',           demand: '5 TRI',               size: 'Large', imageFile: '/cards/visitors/Barry Cycez - Large.png' },
+  { id: 'v03', name: 'Bruceland Whisper',   title: 'The Half-Orc',            demand: '1 ARM, 1 TRI, 1 TRG', size: 'Small', imageFile: '/cards/visitors/Bruceland Whisper - Small.png' },
   { id: 'v04', name: 'Caroline Spender',    title: 'The Profiteer',           demand: '1 ARM, 2 TRG',        size: 'Small', imageFile: '/cards/visitors/Caroline Spender - Small.png' },
   { id: 'v05', name: 'Charley Barkinson',   title: 'The Volunteer',           demand: '3 CON, 1 TRG',        size: 'Small', imageFile: '/cards/visitors/Charley Barkinson - Small.png' },
   { id: 'v06', name: 'Charley Malina',      title: 'The Enchantress',         demand: '3 CON, 2 TRI',        size: 'Large', imageFile: '/cards/visitors/Charley Malina - Large.png' },
@@ -27,14 +27,14 @@ export const VISITOR_CARDS: VisitorCard[] = [
   { id: 'v21', name: 'Luka Griginey',       title: 'The Specialist',          demand: '2 CON, 2 TRI, 1 TRG', size: 'Large', imageFile: '/cards/visitors/Luka Griginey - Large.png' },
   { id: 'v22', name: 'Maizen Brikbrach',    title: 'The Lone Wolf',           demand: '2 ARM, 1 CON',        size: 'Large', imageFile: '/cards/visitors/Maizen Brikbrach - Large.png' },
   { id: 'v23', name: 'Philly Svecorin',     title: 'The Warden',              demand: '3 ARM',               size: 'Small', imageFile: '/cards/visitors/Philly Svecorin - Small.png' },
-  { id: 'v24', name: 'Romano Vertovin',     title: 'The Travelling Merchant', demand: '4 CON',               size: 'Small', imageFile: '/cards/visitors/Romano Vertovin - Small.png' },
+  { id: 'v24', name: 'Romano Vertovin',     title: 'The Travelling Merchant', demand: '4 TRI',               size: 'Small', imageFile: '/cards/visitors/Romano Vertovin - Small.png' },
   { id: 'v25', name: 'Rose Sunguard',       title: 'The Scout',               demand: '2 ARM, 2 CON, 1 TRI', size: 'Large', imageFile: '/cards/visitors/Rose Sunguard - Large.png' },
   { id: 'v26', name: 'Saint Casien Klawus', title: 'The Cleric',              demand: '2 CON, 1 TRI',        size: 'Small', imageFile: '/cards/visitors/Saint Casien Klawus - Small.png' },
   { id: 'v27', name: 'Stephano Morsin',     title: 'The Bodyguard',           demand: '3 ARM, 1 CON',        size: 'Small', imageFile: '/cards/visitors/Stephano Morsin - Small.png' },
   { id: 'v28', name: 'Terry Brickbranch',   title: 'The Town Crier',          demand: '1 CON, 2 TRG',        size: 'Small', imageFile: '/cards/visitors/Terry Brickbranch - Small.png' },
   { id: 'v29', name: 'Thomson Sperean',     title: 'The Worker',              demand: '1 CON, 2 TRG',        size: 'Small', imageFile: '/cards/visitors/Thomson Sperean - Small.png' },
   { id: 'v30', name: 'Timon Kaphutais',     title: 'The Highwayman',          demand: '2 ARM, 1 CON',        size: 'Small', imageFile: '/cards/visitors/Timon Kaphutais - Small.png' },
-  { id: 'v31', name: 'Timothy Percivil',    title: 'The Craftsman',           demand: '2 ARM, 1 TRI, 2 TRG', size: 'Large', imageFile: '/cards/visitors/Timothy Percivil - Large.png' },
+  { id: 'v31', name: 'Timothy Percivil',    title: 'The Craftsman',           demand: '2 ARM, 1 CON, 2 TRG', size: 'Large', imageFile: '/cards/visitors/Timothy Percivil - Large.png' },
   { id: 'v32', name: 'Willy Wildheart',     title: 'The Hermit',              demand: '2 CON, 2 TRG',        size: 'Small', imageFile: '/cards/visitors/Willy Wildheart - Small.png' },
   { id: 'v33', name: 'Yanneth Spierela',    title: 'The Noble',               demand: '2 ARM, 3 TRI',        size: 'Large', imageFile: '/cards/visitors/Yanneth Spierela - Large.png' },
   { id: 'v34', name: 'Yasmin Maris',        title: 'The Painter',             demand: '2 CON, 1 TRG',        size: 'Small', imageFile: '/cards/visitors/Yasmin Maris - Small.png' },

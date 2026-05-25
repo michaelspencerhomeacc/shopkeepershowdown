@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ResourceCard } from '../types'
 
 const TYPE_BAR: Record<string, string> = {
@@ -24,6 +25,8 @@ interface Props {
 }
 
 export function ResourceCardMini({ card, selected, onClick, size = 'sm', disabled }: Props) {
+  const [imgLoaded, setImgLoaded] = useState(false)
+
   const dims: Record<string, { w: string; imgH: string; nameSize: string; metaSize: string }> = {
     sm: { w: 'w-[60px]',  imgH: 'h-[88px]',  nameSize: 'text-[8px]',  metaSize: 'text-[8px]'  },
     md: { w: 'w-[72px]',  imgH: 'h-[108px]', nameSize: 'text-[8px]',  metaSize: 'text-[8px]'  },
@@ -46,12 +49,16 @@ export function ResourceCardMini({ card, selected, onClick, size = 'sm', disable
         ${disabled ? 'opacity-40 cursor-not-allowed' : onClick ? 'cursor-pointer active:scale-100' : 'cursor-default'}
       `}
     >
-      <div className={`${imgH} overflow-hidden`}>
+      <div className={`${imgH} overflow-hidden relative`}>
+        {!imgLoaded && (
+          <div className="absolute inset-0 bg-gradient-to-b from-ink-700 to-ink-900 animate-pulse" />
+        )}
         <img
           src={card.imageFile}
           alt={card.name}
-          className="w-full h-full object-cover"
-          loading="lazy"
+          className={`w-full h-full object-cover transition-opacity duration-300 ${imgLoaded ? 'opacity-100' : 'opacity-0'}`}
+          loading="eager"
+          onLoad={() => setImgLoaded(true)}
         />
       </div>
       <div className={`${TYPE_BAR[card.type] ?? 'bg-ink-800/95'} px-1.5 pt-0.5 pb-1`}>
