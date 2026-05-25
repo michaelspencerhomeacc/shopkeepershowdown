@@ -1,8 +1,83 @@
 import { useState } from 'react'
-import type { ClassId } from '../types'
+import type { ClassId, ClassCard, ClassStatus } from '../types'
 import { CLASSES } from '../data/classes'
 import { useGameStore } from '../store/gameStore'
 import { CardImage } from '../components/CardImage'
+
+const STATUS_STYLES: Record<ClassStatus, { label: string; bg: string; text: string }> = {
+  WIP:  { label: 'WIP',  bg: 'bg-red-900/80',    text: 'text-red-300' },
+  BETA: { label: 'BETA', bg: 'bg-amber-800/80',   text: 'text-amber-300' },
+  LIVE: { label: 'LIVE', bg: 'bg-green-900/80',   text: 'text-green-300' },
+}
+
+function ClassDetailModal({ cls, onClose }: { cls: ClassCard; onClose: () => void }) {
+  const st = STATUS_STYLES[cls.status]
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink-950/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="panel p-0 w-full max-w-lg overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header image strip */}
+        <div className="relative h-44 overflow-hidden">
+          <CardImage
+            src={cls.imageFile}
+            alt={cls.name}
+            className="w-full h-full object-cover object-top"
+            fallbackText={cls.name}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-ink-900 via-ink-900/40 to-transparent" />
+          {/* Status badge */}
+          <span className={`absolute top-2 right-2 text-xs font-bold px-2 py-0.5 rounded ${st.bg} ${st.text} tracking-widest border border-current/30`}>
+            {st.label}
+          </span>
+          <div className="absolute bottom-3 left-4">
+            <h2 className="font-display text-2xl font-bold text-parchment-100 leading-tight">{cls.name}</h2>
+            <p className="text-sm text-gold-400 italic">{cls.tagline}</p>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
+          {/* Passive */}
+          <div>
+            <div className="zone-label mb-1.5">Passive</div>
+            <p className="text-sm text-parchment-300 leading-relaxed">{cls.passive}</p>
+          </div>
+
+          {/* Actives */}
+          <div>
+            <div className="zone-label mb-1.5">Active Abilities</div>
+            <ul className="space-y-2.5">
+              {cls.actives.map((a, i) => {
+                const [title, ...rest] = a.split(' — ')
+                return (
+                  <li key={i} className="text-sm text-parchment-300 leading-relaxed">
+                    <span className="text-gold-400 font-semibold">{title}</span>
+                    {rest.length > 0 && <span className="text-parchment-400"> — {rest.join(' — ')}</span>}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+
+          {/* Playstyle */}
+          <div>
+            <div className="zone-label mb-1.5">Playstyle</div>
+            <p className="text-sm text-parchment-400 leading-relaxed italic">{cls.playstyle}</p>
+          </div>
+        </div>
+
+        <div className="px-5 pb-5">
+          <button onClick={onClose} className="btn-secondary w-full text-sm py-2">Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 interface PlayerDef {
   name: string
@@ -12,6 +87,7 @@ interface PlayerDef {
 export function Lobby() {
   const { startGame } = useGameStore()
   const [playerCount, setPlayerCount] = useState(2)
+  const [selectedClass, setSelectedClass] = useState<ClassCard | null>(null)
   const [players, setPlayers] = useState<PlayerDef[]>([
     { name: 'Player 1', classId: 'barbarian' },
     { name: 'Player 2', classId: 'rogue' },
@@ -101,27 +177,35 @@ export function Lobby() {
 
         {/* Class grid preview */}
         <div>
-          <label className="zone-label block mb-2">Classes Available</label>
+          <label className="zone-label block mb-2">Classes Available <span className="text-parchment-600 font-normal normal-case text-[10px]">— click for details</span></label>
           <div className="grid grid-cols-4 gap-2">
-            {CLASSES.map(cls => (
-              <div
-                key={cls.id}
-                className="rounded-lg overflow-hidden border border-parchment-800/30 hover:border-gold-500/40 transition-colors cursor-default"
-              >
-                <div className="aspect-[2/3] relative">
-                  <CardImage
-                    src={cls.imageFile}
-                    alt={cls.name}
-                    className="w-full h-full"
-                    fallbackText={cls.name}
-                  />
-                </div>
-                <div className="bg-ink-800/80 p-1 text-center">
-                  <div className="text-xs font-display text-parchment-200">{cls.name}</div>
-                  <div className="text-[9px] text-parchment-500 italic">{cls.tagline}</div>
-                </div>
-              </div>
-            ))}
+            {CLASSES.map(cls => {
+              const st = STATUS_STYLES[cls.status]
+              return (
+                <button
+                  key={cls.id}
+                  onClick={() => setSelectedClass(cls)}
+                  className="rounded-lg overflow-hidden border border-parchment-800/30 hover:border-gold-500/60 hover:scale-[1.03] transition-all text-left focus:outline-none focus:border-gold-500/80"
+                >
+                  <div className="aspect-[2/3] relative">
+                    <CardImage
+                      src={cls.imageFile}
+                      alt={cls.name}
+                      className="w-full h-full"
+                      fallbackText={cls.name}
+                    />
+                    {/* Status banner */}
+                    <div className={`absolute top-1.5 left-1.5 text-[8px] font-bold px-1.5 py-0.5 rounded tracking-widest ${st.bg} ${st.text}`}>
+                      {st.label}
+                    </div>
+                  </div>
+                  <div className="bg-ink-800/80 p-1.5 text-center">
+                    <div className="text-sm font-display text-parchment-200">{cls.name}</div>
+                    <div className="text-[11px] text-parchment-500 italic truncate px-0.5">{cls.tagline}</div>
+                  </div>
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -134,6 +218,11 @@ export function Lobby() {
           Begin the Showdown
         </button>
       </div>
+
+      {/* Class detail modal */}
+      {selectedClass && (
+        <ClassDetailModal cls={selectedClass} onClose={() => setSelectedClass(null)} />
+      )}
     </div>
   )
 }

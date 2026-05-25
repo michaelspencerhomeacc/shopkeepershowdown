@@ -21,6 +21,6 @@ export const WORK_ORDER_CARDS: WorkOrderCard[] = [
   { id: 'wo16', name: 'Truthringer',        recipe: '3 CON + 1 TRG',         price: 21, tagline: "Hasn't rang during council sessions for years now.",                    imageFile: '/cards/workorders/Truthringer.png' },
   { id: 'wo17', name: 'Velvet Sting',       recipe: '2 ARM + 1 TRG',         price: 16, tagline: "Named after the first thing it cut: too fancy for opening a biscuit.",  imageFile: '/cards/workorders/Velvet Sting.png' },
   { id: 'wo18', name: 'Vial of Blessings',  recipe: '2 TRI + 2 CON',         price: 22, tagline: "Do not drink around heavy sneezes.",                                    imageFile: '/cards/workorders/Vial of Blessings.png' },
-  { id: 'wo19', name: 'Winter Stockpile',   recipe: '1 TRI + 4 TRG',         price: 28, tagline: "Keep the tavern stocked and open all day of winter.",                   imageFile: '/cards/workorders/Winter Stockpile.png' },
+  { id: 'wo19', name: 'Winter Stockpile',   recipe: '1 CON + 4 TRG',         price: 28, tagline: "Keep the tavern stocked and open all day of winter.",                   imageFile: '/cards/workorders/Winter Stockpile.png' },
   { id: 'wo20', name: 'Wintercourt Mantle', recipe: '2 ARM + 1 TRI + 1 CON', price: 24, tagline: "Great for dramatic exits, better for dramatic weather.",                imageFile: '/cards/workorders/Wintercourt Mantle.png' },
 ]

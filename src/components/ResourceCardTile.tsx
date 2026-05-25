@@ -3,10 +3,41 @@ import type { ResourceCard } from '../types'
 import { CardImage } from './CardImage'
 
 const TYPE_COLORS: Record<string, string> = {
-  ARM: 'bg-red-900/80 text-red-200',
-  CON: 'bg-green-900/80 text-green-200',
-  TRI: 'bg-purple-900/80 text-purple-200',
-  TRG: 'bg-amber-900/80 text-amber-200',
+  ARM: 'bg-orange-700 text-orange-100',
+  CON: 'bg-blue-700 text-blue-100',
+  TRI: 'bg-green-700 text-green-100',
+  TRG: 'bg-pink-700 text-pink-100',
+}
+
+/**
+ * Renders a work-order recipe string ("2 ARM + 1 TRI + 1 CON") as coloured type badges.
+ * Falls back to plain text for any tokens that don't match a known type.
+ */
+export function RecipeDisplay({ recipe }: { recipe: string }) {
+  // Split on "+" separators, each token is like "2 ARM" or "1 CON"
+  const parts = recipe.split('+').map(s => s.trim())
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {parts.map((part, i) => {
+        const match = part.match(/^(\d+)\s+(ARM|CON|TRI|TRG)$/)
+        if (match) {
+          return (
+            <span key={i} className="inline-flex items-center gap-0.5">
+              {i > 0 && <span className="text-parchment-600 text-[9px]">+</span>}
+              <span className={`text-[9px] font-bold px-1 py-0.5 rounded ${TYPE_COLORS[match[2]]}`}>
+                {match[1]} {match[2]}
+              </span>
+            </span>
+          )
+        }
+        return (
+          <span key={i} className="text-[9px] text-parchment-400">
+            {i > 0 ? '+ ' : ''}{part}
+          </span>
+        )
+      })}
+    </span>
+  )
 }
 
 interface Props {
@@ -17,15 +48,28 @@ interface Props {
   dimmed?: boolean
   stolen?: boolean
   onClick?: () => void
+  /** When set the whole tile is draggable and this value is written to dataTransfer */
+  dragCardId?: string
+  /** Extra key→value pairs written to dataTransfer alongside dragCardId */
+  extraDragData?: Record<string, string>
 }
 
-export function ResourceCardTile({ card, size = 'md', actions, overlay, dimmed, stolen, onClick }: Props) {
+export function ResourceCardTile({ card, size = 'md', actions, overlay, dimmed, stolen, onClick, dragCardId, extraDragData }: Props) {
   const [showZoom, setShowZoom] = useState(false)
 
   const dims = size === 'sm' ? 'w-[80px] h-[112px]' : size === 'lg' ? 'w-[140px] h-[196px]' : 'w-[100px] h-[140px]'
 
   return (
-    <div className="relative group" style={{ display: 'inline-block' }}>
+    <div
+      className={`relative group select-none ${dragCardId ? 'cursor-grab active:cursor-grabbing' : ''}`}
+      style={{ display: 'inline-block' }}
+      draggable={!!dragCardId}
+      onDragStart={dragCardId ? e => {
+        e.dataTransfer.setData('text/plain', dragCardId)
+        e.dataTransfer.effectAllowed = 'move'
+        if (extraDragData) Object.entries(extraDragData).forEach(([k, v]) => e.dataTransfer.setData(k, v))
+      } : undefined}
+    >
       <div
         className={`card ${dims} relative ${dimmed ? 'opacity-50' : ''} ${onClick ? 'cursor-pointer' : ''}`}
         onClick={onClick}
@@ -39,8 +83,8 @@ export function ResourceCardTile({ card, size = 'md', actions, overlay, dimmed, 
           fallbackText={`${card.name}\n$${card.value} ${card.type}`}
         />
         {stolen && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <img src="/cards/tokens/Stolen.png" alt="Stolen" className="w-6 h-6 opacity-90" />
+          <div className="absolute top-0.5 right-0.5 z-10">
+            <img src="/cards/tokens/Stolen.png" alt="Stolen" className="w-5 h-5 opacity-95 drop-shadow-md" />
           </div>
         )}
         {overlay}
