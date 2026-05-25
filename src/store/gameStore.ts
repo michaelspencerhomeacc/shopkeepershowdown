@@ -150,6 +150,7 @@ function buildInitialGameState(players: Player[]): GameState {
     righteousDuelResult: null,
     negotiatePending: null,
     negotiatesCompletedThisTurn: 0,
+    politePromoterResetUsed: false,
     shamanCallLightning: null,
     bonusActionsThisTurn: 0,
     endgame: null,
@@ -228,6 +229,7 @@ interface GameStore extends GameState {
   peekTownCrier: (playerId: string) => void
   completeTownCrier: (playerId: string, placeCardId: string, replaceSlotIdx: number) => void
   takeFromFleaMarket: (playerId: string, slotIdx: number) => void
+  takeManyFromFleaMarket: (playerId: string, slotIndices: number[]) => void
 
   // Professional actions
   refreshOneActiveToken: (playerId: string) => void
@@ -344,6 +346,7 @@ const INITIAL: GameState = {
   righteousDuelResult: null,
   shamanCallLightning: null,
   bonusActionsThisTurn: 0,
+  politePromoterResetUsed: false,
   endgame: null,
   rn04RerollPending: null,
   ambushPending: null,
@@ -475,10 +478,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ],
       }))
     }
-    // Ranger: reset Trick Shot at game start; resource gather fires in completeSellPhase
+    // Ranger: reset Trick Shot + fire Master of the Wilderness on first turn (Round 1 has no sell phase)
     if (firstPlayer.classId === 'ranger') {
       set(s => ({
         players: s.players.map(p => p.id === firstPlayer.id ? { ...p, trickShotAvailable: true } : p),
+      }))
+      const roll = Math.ceil(Math.random() * 6)
+      const count = Math.floor(roll / 2)
+      const st = get()
+      const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
+      set(s => ({
+        resourceDeck: deck,
+        resourceDiscard: discard,
+        lastDrawnCards: drawn,  // always set (even []) so DrawnCardsToast fires
+        players: drawn.length > 0
+          ? s.players.map(p => p.id !== firstPlayer.id ? p : { ...p, hoard: [...p.hoard, ...drawn] })
+          : s.players,
+        actionLog: [logEntry(
+          drawn.length > 0
+            ? `${firstPlayer.name}'s Master of the Wilderness — rolled ${roll}, drew ${drawn.length} resource${drawn.length !== 1 ? 's' : ''} free.`
+            : `${firstPlayer.name}'s Master of the Wilderness — rolled ${roll} (0 free resources).`,
+          firstPlayer.id
+        ), ...s.actionLog.slice(0, 49)],
       }))
     }
   },
@@ -711,6 +732,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ),
       actionLog: [logEntry(`${player.name} bought ${card.name} from the Flea Market.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
+    get().refillFleaMarket()
   },
 
   refillFleaMarket() {
@@ -1111,18 +1133,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   forage(playerId) {
-    const { resourceDeck, resourceDiscard, players } = get()
+    const { resourceDiscard, players } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
-    // Shuffle discard into deck, then draw 4
-    const combinedDeck = shuffle([...resourceDeck, ...resourceDiscard])
-    const drawn = combinedDeck.slice(0, 4)
-    const remaining = combinedDeck.slice(4)
+    if (resourceDiscard.length < 4) return  // not enough cards — UI should block this
+    // Pick 4 random cards from the discard pile; unkept cards are returned to discard by completeForage
+    const shuffled = shuffle([...resourceDiscard])
+    const drawn = shuffled.slice(0, 4)
+    const remaining = shuffled.slice(4)
     set(s => ({
-      resourceDeck: remaining,
-      resourceDiscard: [],
-      foragePeek: drawn.length > 0 ? { playerId, cards: drawn } : null,
-      actionLog: [logEntry(`${player.name} forages — shuffled discard into deck, drew 4.`, playerId), ...s.actionLog.slice(0, 49)],
+      resourceDiscard: remaining,
+      foragePeek: { playerId, cards: drawn },
+      actionLog: [logEntry(`${player.name} forages — drew 4 from the discard pile.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -1351,11 +1373,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { players, fleaMarket } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
-    if (!player.stolenHoardCardIds.includes(cardId)) {
+
+    // Card can be a stolen hoard card OR a stolen window card
+    const isInHoard = player.stolenHoardCardIds.includes(cardId)
+    const stolenWindowIdx = player.windows.findIndex(w => w.stolen && w.card?.id === cardId)
+    if (!isInHoard && stolenWindowIdx === -1) {
       console.error('fence: card is not marked stolen')
       return
     }
-    const card = player.hoard.find(c => c.id === cardId)
+    const card = isInHoard
+      ? player.hoard.find(c => c.id === cardId)
+      : player.windows[stolenWindowIdx]?.card
     if (!card) return
 
     // Validate: card type must differ from first non-null flea market card
@@ -1368,16 +1396,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     set(s => ({
-      players: s.players.map(p =>
-        p.id === playerId
-          ? {
-              ...p,
-              hoard: p.hoard.filter(c => c.id !== cardId),
-              stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== cardId),
-              coins: p.coins + card.value,
-            }
-          : p
-      ),
+      players: s.players.map(p => {
+        if (p.id !== playerId) return p
+        if (isInHoard) {
+          return {
+            ...p,
+            hoard: p.hoard.filter(c => c.id !== cardId),
+            stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== cardId),
+            coins: p.coins + card.value,
+          }
+        }
+        return {
+          ...p,
+          windows: p.windows.map((w, i) => i === stolenWindowIdx ? { ...w, card: null, stolen: false } : w),
+          coins: p.coins + card.value,
+        }
+      }),
       resourceDiscard: [card, ...s.resourceDiscard],
       actionLog: [logEntry(`${player.name} fenced ${card.name} for ${card.value} coins.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
@@ -1647,7 +1681,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
       ),
       actionLog: [logEntry(`${player.name} took ${card.name} from the Flea Market.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
-    // Auto-refill
+    get().refillFleaMarket()
+  },
+
+  takeManyFromFleaMarket(playerId, slotIndices) {
+    if (slotIndices.length === 0) return
+    const { fleaMarket, players } = get()
+    const player = players.find(p => p.id === playerId)
+    if (!player) return
+    const taken = slotIndices.map(i => fleaMarket[i]).filter((c): c is ResourceCard => c !== null)
+    if (taken.length === 0) return
+    const slotSet = new Set(slotIndices)
+    set(s => ({
+      fleaMarket: s.fleaMarket.map((c, i) => slotSet.has(i) ? null : c),
+      players: s.players.map(p =>
+        p.id === playerId ? { ...p, hoard: [...p.hoard, ...taken] } : p
+      ),
+      actionLog: [logEntry(`${player.name} took ${taken.map(c => c.name).join(', ')} from the Flea Market.`, playerId), ...s.actionLog.slice(0, 49)],
+    }))
     get().refillFleaMarket()
   },
 
@@ -1901,21 +1952,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (ranger?.classId === 'ranger') {
       const roll = Math.ceil(Math.random() * 6)
       const count = Math.floor(roll / 2)
-      if (count > 0) {
-        const st = get()
-        const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
-        set(s => ({
-          resourceDeck: deck,
-          resourceDiscard: discard,
-          lastDrawnCards: drawn,
-          players: s.players.map(p => p.id !== currentTurnPlayerId ? p : { ...p, hoard: [...p.hoard, ...drawn] }),
-          actionLog: [logEntry(`${ranger.name}'s Master of the Wilderness — rolled ${roll}, drew ${drawn.length} resource${drawn.length !== 1 ? 's' : ''} free.`, currentTurnPlayerId), ...s.actionLog.slice(0, 49)],
-        }))
-      } else {
-        set(s => ({
-          actionLog: [logEntry(`${ranger.name}'s Master of the Wilderness — rolled ${roll} (0 free resources).`, currentTurnPlayerId), ...s.actionLog.slice(0, 49)],
-        }))
-      }
+      const st = get()
+      const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
+      set(s => ({
+        resourceDeck: deck,
+        resourceDiscard: discard,
+        lastDrawnCards: drawn,  // always set (even []) so DrawnCardsToast fires
+        players: drawn.length > 0
+          ? s.players.map(p => p.id !== currentTurnPlayerId ? p : { ...p, hoard: [...p.hoard, ...drawn] })
+          : s.players,
+        actionLog: [logEntry(
+          drawn.length > 0
+            ? `${ranger.name}'s Master of the Wilderness — rolled ${roll}, drew ${drawn.length} resource${drawn.length !== 1 ? 's' : ''} free.`
+            : `${ranger.name}'s Master of the Wilderness — rolled ${roll} (0 free resources).`,
+          currentTurnPlayerId
+        ), ...s.actionLog.slice(0, 49)],
+      }))
     }
   },
 
@@ -2909,15 +2961,36 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }))
     }
 
-    // Helper: reset Ranger's Trick Shot at the start of each turn
+    // Helper: reset Ranger's Trick Shot + fire Master of the Wilderness if applicable
     const applyRangerPassive = (startingId: string) => {
-      const ranger = get().players.find(p => p.id === startingId)
+      const { players, round } = get()
+      const ranger = players.find(p => p.id === startingId)
       if (!ranger || ranger.classId !== 'ranger') return
       // Reset Trick Shot availability for this turn
       set(s => ({
         players: s.players.map(p => p.id !== startingId ? p : { ...p, trickShotAvailable: true }),
       }))
-      // NOTE: Master of the Wilderness resource gather fires in completeSellPhase (after sell phase)
+      // Master of the Wilderness: in Round 1 there is no sell phase, so fire gather here.
+      // From Round 2 onward it fires in completeSellPhase (after the sell phase UI).
+      if (round !== 1) return
+      const roll = Math.ceil(Math.random() * 6)
+      const count = Math.floor(roll / 2)
+      const st = get()
+      const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
+      set(s => ({
+        resourceDeck: deck,
+        resourceDiscard: discard,
+        lastDrawnCards: drawn,  // always set (even []) so DrawnCardsToast fires
+        players: drawn.length > 0
+          ? s.players.map(p => p.id !== startingId ? p : { ...p, hoard: [...p.hoard, ...drawn] })
+          : s.players,
+        actionLog: [logEntry(
+          drawn.length > 0
+            ? `${ranger.name}'s Master of the Wilderness — rolled ${roll}, drew ${drawn.length} resource${drawn.length !== 1 ? 's' : ''} free.`
+            : `${ranger.name}'s Master of the Wilderness — rolled ${roll} (0 free resources).`,
+          startingId
+        ), ...s.actionLog.slice(0, 49)],
+      }))
     }
 
 
@@ -2955,6 +3028,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         righteousDuelResult: null,
         negotiatePending: null,
         negotiatesCompletedThisTurn: 0,
+        politePromoterResetUsed: false,
         bonusActionsThisTurn: 0,
         foragePeek: null,
         sellPhaseDone: false,
@@ -2974,6 +3048,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         righteousDuelResult: null,
         negotiatePending: null,
         negotiatesCompletedThisTurn: 0,
+        politePromoterResetUsed: false,
         bonusActionsThisTurn: 0,
         foragePeek: null,
         sellPhaseDone: false,

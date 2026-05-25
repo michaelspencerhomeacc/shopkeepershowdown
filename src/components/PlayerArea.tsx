@@ -8,18 +8,20 @@ import { CLASSES } from '../data/classes'
 import { CardImage } from './CardImage'
 import { ClassAbilitiesPanel } from './ClassAbilitiesPanel'
 
-const REP_TYPES: Array<{ key: 'ARM' | 'CON' | 'TRI' | 'TRG'; label: string; color: string; textColor: string; icon: string }> = [
-  { key: 'ARM', label: 'ARM', color: 'bg-orange-700/50', textColor: 'text-orange-400', icon: '⚔️' },
-  { key: 'CON', label: 'CON', color: 'bg-blue-700/50',   textColor: 'text-blue-400',   icon: '🧪' },
-  { key: 'TRI', label: 'TRI', color: 'bg-green-700/50',  textColor: 'text-green-400',  icon: '💎' },
-  { key: 'TRG', label: 'TRG', color: 'bg-pink-700/50',   textColor: 'text-pink-400',   icon: '📦' },
+const REP_TYPES: Array<{ key: 'ARM' | 'CON' | 'TRI' | 'TRG'; label: string; color: string; textColor: string; icon: string; image: string }> = [
+  { key: 'ARM', label: 'ARM', color: 'bg-orange-700/50', textColor: 'text-orange-400', icon: '⚔️', image: '/cards/tokens/Armament Reputation Token.png' },
+  { key: 'CON', label: 'CON', color: 'bg-blue-700/50',   textColor: 'text-blue-400',   icon: '🧪', image: '/cards/tokens/Consumable Reputation Token.png' },
+  { key: 'TRI', label: 'TRI', color: 'bg-green-700/50',  textColor: 'text-green-400',  icon: '💎', image: '/cards/tokens/Trinket Reputation Token.png' },
+  { key: 'TRG', label: 'TRG', color: 'bg-pink-700/50',   textColor: 'text-pink-400',   icon: '📦', image: '/cards/tokens/Trade Good Reputation Token.png' },
 ]
 
 const STATUS_ICONS: Record<WindowStatus, string> = {
   normal: '',
-  broken: '🔨',
+  broken: '',
   shuttered: '🔒',
 }
+
+const BREAK_TOKEN = '/cards/tokens/Break_Protect - side two.png'
 
 interface Props {
   player: Player
@@ -78,13 +80,13 @@ export function PlayerArea({ player, playerIndex }: Props) {
         <div className="flex items-center gap-2">
           <div className={`w-4 h-4 rounded-full ${playerColor}`} />
           <div>
-            <h3 className="font-display font-semibold text-parchment-100 text-sm">{player.name}</h3>
-            <div className="text-xs text-parchment-500">{classInfo?.name ?? player.classId}</div>
+            <h3 className="font-display font-semibold text-parchment-100 text-base">{player.name}</h3>
+            <div className="text-sm text-parchment-500">{classInfo?.name ?? player.classId}</div>
           </div>
           {player.hasNightWatcher && (
             <div className="flex items-center gap-1 ml-1">
               <img src="/cards/tokens/The Night Watcher.png" alt="Night Watcher" className="w-5 h-5" />
-              <span className="text-xs text-gold-400">Night Watcher</span>
+              <span className="text-sm text-gold-400">Night Watcher</span>
             </div>
           )}
         </div>
@@ -111,6 +113,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
             onDecrement={() => adjustRep(player.id, rt.key, -1)}
             color={rt.color}
             textColor={rt.textColor}
+            image={rt.image}
           />
         ))}
       </div>
@@ -119,7 +122,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
       <div className="flex items-center gap-2">
         {player.classId !== 'monk' && (
           <>
-            <span className="text-xs text-parchment-400">Active:</span>
+            <span className="text-sm text-parchment-400">Active:</span>
             <div className="flex gap-1">
               {Array.from({ length: 2 }, (_, i) => (
                 <div
@@ -175,7 +178,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
         <div className="flex items-center justify-between mb-1">
           <span className="zone-label">Shop Windows</span>
           {placingCardId && (
-            <span className="text-xs text-gold-400 animate-pulse">Click a window to place</span>
+            <span className="text-sm text-gold-400 animate-pulse">Click a window to place</span>
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -269,7 +272,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
               </div>
             ))}
             {player.hoard.length === 0 && (
-              <div className="text-xs text-parchment-600 italic">Empty hoard</div>
+              <div className="text-sm text-parchment-600 italic">Empty hoard</div>
             )}
           </div>
         )}
@@ -277,16 +280,8 @@ export function PlayerArea({ player, playerIndex }: Props) {
 
       {/* Work Order */}
       <div>
-        <div className="flex items-center justify-between mb-1">
+        <div className="mb-1">
           <span className="zone-label">Workbench</span>
-          {!player.workOrder && !pendingWorkOrders && (
-            <button
-              onClick={handleDrawWorkOrders}
-              className="btn-secondary text-xs px-2 py-0.5"
-            >
-              Draw Work Orders
-            </button>
-          )}
         </div>
 
         {pendingWorkOrders && (
@@ -313,31 +308,14 @@ export function PlayerArea({ player, playerIndex }: Props) {
           <div className="flex items-center gap-3 bg-ink-800/60 rounded-lg border border-parchment-700/30 p-2">
             <CardImage src={player.workOrder.imageFile} alt={player.workOrder.name} className="w-12 h-12 rounded object-cover flex-shrink-0" fallbackText="" />
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-semibold text-parchment-100 leading-tight">{player.workOrder.name}</div>
-              <div className="text-[11px] text-parchment-400 mt-0.5">Recipe: <RecipeDisplay recipe={player.workOrder.recipe} /></div>
-              <div className="text-xs font-bold text-gold-400 mt-0.5">${player.workOrder.price}</div>
+              <div className="text-sm font-semibold text-parchment-100 leading-tight">{player.workOrder.name}</div>
+              <div className="text-xs text-parchment-400 mt-0.5">Recipe: <RecipeDisplay recipe={player.workOrder.recipe} /></div>
+              <div className="text-sm font-bold text-gold-400 mt-0.5">${player.workOrder.price}</div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Night Watcher transfer */}
-      {player.hasNightWatcher && players.length > 1 && (
-        <div>
-          <span className="zone-label">Transfer Night Watcher</span>
-          <div className="flex flex-wrap gap-1 mt-1">
-            {players.filter(p => p.id !== player.id).map(p => (
-              <button
-                key={p.id}
-                onClick={() => transferNightWatcher(player.id, p.id)}
-                className="btn-secondary text-xs px-2 py-0.5"
-              >
-                → {p.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Class-specific decks */}
       {player.classId === 'rogue' && player.counterfeitCards.length > 0 && (
@@ -407,7 +385,7 @@ function WindowSlotDisplay({
   if (!slot.card) {
     return (
       <div
-        className={`zone w-[80px] h-[112px] flex flex-col items-center justify-center cursor-pointer transition-all
+        className={`zone w-[100px] h-[140px] flex flex-col items-center justify-center cursor-pointer transition-all
           ${isTarget || dragOver ? 'border-gold-400/80 bg-gold-400/10' : 'hover:border-parchment-600/60'}
           ${statusOverlay[slot.status]}`}
         onClick={onClick}
@@ -416,17 +394,17 @@ function WindowSlotDisplay({
         onDrop={handleDrop}
         title={`Window ${index + 1} — ${slot.status}`}
       >
-        <span className="text-xs text-parchment-600">{index + 1}</span>
+        <span className="text-sm text-parchment-600">{index + 1}</span>
         {slot.status === 'broken' ? (
           <div className="flex flex-col items-center gap-1 mt-1">
-            <span className="text-sm">{STATUS_ICONS.broken}</span>
+            <img src={BREAK_TOKEN} alt="Broken" className="w-8 h-8 rounded-full border border-red-400/60 shadow-md" />
             <button
               onClick={e => { e.stopPropagation(); onRepairForCoins() }}
               disabled={!canRepair}
-              className="text-[7px] bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 rounded px-1 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="text-xs bg-emerald-900/90 hover:bg-emerald-800 text-emerald-200 font-semibold rounded px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
               title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
             >
-              🔧 3$
+              🔧 Fix · 3$
             </button>
           </div>
         ) : slot.status !== 'normal' ? (
@@ -446,69 +424,34 @@ function WindowSlotDisplay({
     >
     <ResourceCardTile
       card={slot.card}
-      size="sm"
+      size="md"
       stolen={slot.stolen}
       dragCardId={slot.card.id}
       extraDragData={{ 'application/window-index': String(index) }}
       overlay={
-        slot.status !== 'normal' ? (
+        slot.status === 'broken' ? (
+          <div className={`absolute inset-0 ${statusOverlay.broken} rounded-lg pointer-events-none`}>
+            <div className="absolute top-0.5 right-0.5 z-10 w-6 h-6 rounded-full border border-red-400/60 overflow-hidden shadow-md">
+              <img src={BREAK_TOKEN} alt="Broken" className="w-full h-full object-cover" />
+            </div>
+          </div>
+        ) : slot.status !== 'normal' ? (
           <div className={`absolute inset-0 flex items-end justify-center pb-1 text-sm ${statusOverlay[slot.status]} rounded-lg`}>
             {STATUS_ICONS[slot.status]}
           </div>
         ) : undefined
       }
       actions={
-        <div className="flex flex-col gap-0.5 items-center w-full px-0.5">
-          <div className="flex gap-0.5">
-            <button
-              onClick={e => { e.stopPropagation(); onMoveToHoard() }}
-              className="text-[7px] bg-blue-900/80 hover:bg-blue-800 text-blue-200 font-bold rounded px-1 py-0.5"
-              title="Move to hoard"
-            >
-              Hoard
-            </button>
-            <button
-              onClick={e => { e.stopPropagation(); onDiscard() }}
-              className="text-[7px] bg-red-900/80 hover:bg-red-800 text-red-200 font-bold rounded px-1 py-0.5"
-            >
-              Discard
-            </button>
-          </div>
-          <div className="flex gap-0.5">
-            {slot.status === 'broken' ? (
-              <button
-                onClick={e => { e.stopPropagation(); onRepairForCoins() }}
-                disabled={!canRepair}
-                className="text-[7px] bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 rounded px-1 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
-                title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
-              >
-                🔧 3$
-              </button>
-            ) : (
-              <button
-                onClick={e => { e.stopPropagation(); onSetStatus('broken') }}
-                className="text-[7px] bg-orange-900/80 hover:bg-orange-800 text-orange-200 rounded px-1 py-0.5"
-                title="Mark broken"
-              >
-                🔨
-              </button>
-            )}
-            <button
-              onClick={e => { e.stopPropagation(); onSetStatus(slot.status === 'shuttered' ? 'normal' : 'shuttered') }}
-              className="text-[7px] bg-gray-900/80 hover:bg-gray-800 text-gray-200 rounded px-1 py-0.5"
-              title="Toggle shuttered"
-            >
-              {slot.status === 'shuttered' ? 'Open' : '🔒'}
-            </button>
-            <button
-              onClick={e => { e.stopPropagation(); onToggleStolen() }}
-              className="text-[7px] bg-yellow-900/80 hover:bg-yellow-800 text-yellow-200 rounded px-1 py-0.5"
-              title="Toggle stolen marker"
-            >
-              {slot.stolen ? 'Clear' : '⚠'}
-            </button>
-          </div>
-        </div>
+        slot.status === 'broken' ? (
+          <button
+            onClick={e => { e.stopPropagation(); onRepairForCoins() }}
+            disabled={!canRepair}
+            className="text-xs bg-emerald-900/90 hover:bg-emerald-800 text-emerald-200 font-semibold rounded px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
+          >
+            🔧 Fix · 3$
+          </button>
+        ) : undefined
       }
     />
     </div>

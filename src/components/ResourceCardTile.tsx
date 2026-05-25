@@ -83,8 +83,8 @@ export function ResourceCardTile({ card, size = 'md', actions, overlay, dimmed, 
           fallbackText={`${card.name}\n$${card.value} ${card.type}`}
         />
         {stolen && (
-          <div className="absolute top-0.5 right-0.5 z-10">
-            <img src="/cards/tokens/Stolen.png" alt="Stolen" className="w-5 h-5 opacity-95 drop-shadow-md" />
+          <div className="absolute top-0.5 right-0.5 z-10 w-6 h-6 rounded-full border border-yellow-400/60 overflow-hidden shadow-md">
+            <img src="/cards/tokens/Stolen.png" alt="Stolen" className="w-full h-full object-cover" />
           </div>
         )}
         {overlay}
