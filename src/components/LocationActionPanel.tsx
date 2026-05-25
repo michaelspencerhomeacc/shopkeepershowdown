@@ -3,6 +3,7 @@ import type { Location, RepType, Player, ResourceCard, ResourceType } from '../t
 import { useGameStore } from '../store/gameStore'
 import { Keyword } from './Keyword'
 import { ResourceCardMini } from './ResourceCardMini'
+import { RecipeDisplay } from './ResourceCardTile'
 import { parseRequirements, meetsRequirements, type Requirements } from '../utils/requirements'
 
 interface Props {
@@ -47,7 +48,7 @@ export function LocationActionPanel({ location, onClose, onAction }: Props) {
         </div>
 
         <div className="space-y-3">
-          {location === 'guildhall' && <GuildhallActions onAction={onAction} />}
+          {location === 'guildhall' && <GuildhallActions onAction={onAction} onClose={onClose} />}
           {location === 'tavern' && <TavernActions onAction={onAction} />}
           {location === 'wilderness' && <WildernessActions onAction={onAction} />}
           {location === 'barracks' && <BarracksActions onAction={onAction} />}
@@ -63,9 +64,9 @@ export function LocationActionPanel({ location, onClose, onAction }: Props) {
 
 const TYPE_COLORS: Record<string, string> = {
   ARM: 'bg-orange-700/70 border-orange-500/50 text-orange-200',
-  CON: 'bg-blue-900/70 border-blue-500/50 text-blue-200',
-  TRI: 'bg-green-900/70 border-green-500/50 text-green-200',
-  TRG: 'bg-fuchsia-900/70 border-fuchsia-500/50 text-fuchsia-200',
+  CON: 'bg-blue-700/70 border-blue-500/50 text-blue-200',
+  TRI: 'bg-green-700/70 border-green-500/50 text-green-200',
+  TRG: 'bg-pink-700/70 border-pink-500/50 text-pink-200',
 }
 
 export function DrawnCardsToast() {
@@ -123,26 +124,41 @@ export function DrawnCardsToast() {
 
 // ---- Requirement progress bar ----
 
-function RequirementBar({ req, selected }: { req: Requirements; selected: ResourceCard[] }) {
-  const counts: Record<string, number> = { ARM: 0, CON: 0, TRI: 0, TRG: 0 }
+function RequirementBar({
+  req, selected, discountedSlot = null, onSlotClick,
+}: {
+  req: Requirements
+  selected: ResourceCard[]
+  discountedSlot?: string | null
+  onSlotClick?: (type: string) => void
+}) {
+  const counts: Record<string, number> = { ARM: 0, CON: 0, TRI: 0, TRG: 0, ANY: 0 }
   for (const c of selected) counts[c.type] = (counts[c.type] ?? 0) + 1
-  const entries = (Object.entries(req) as [ResourceType, number][]).filter(([, n]) => n > 0)
+
+  const entries = (Object.entries(req) as [string, number][]).filter(([, n]) => n > 0)
   return (
-    <div className="flex gap-1.5 flex-wrap">
+    <div className="flex gap-1.5 flex-wrap items-center">
       {entries.map(([type, need]) => {
+        const isDiscounted = discountedSlot === type
+        const effectiveNeed = isDiscounted ? Math.max(0, need - 1) : need
         const have = counts[type] ?? 0
-        const met = have >= need
+        const met = have >= effectiveNeed
         return (
-          <span
+          <button
             key={type}
-            className={`text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors ${
-              met
-                ? 'bg-green-900/40 border-green-500/60 text-green-300'
-                : 'bg-red-900/30 border-red-500/40 text-red-300'
-            }`}
+            onClick={() => onSlotClick?.(type)}
+            disabled={!onSlotClick}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded border transition-colors disabled:cursor-default ${
+              isDiscounted
+                ? 'bg-amber-900/40 border-amber-500/60 text-amber-200 ring-1 ring-amber-400/60'
+                : met
+                  ? 'bg-green-900/40 border-green-500/60 text-green-300'
+                  : 'bg-red-900/30 border-red-500/40 text-red-300'
+            } ${onSlotClick && !isDiscounted ? 'hover:border-amber-500/50 cursor-pointer' : ''}`}
           >
-            {type}: {have}/{need}
-          </span>
+            {type}: {have}/{effectiveNeed}
+            {isDiscounted && <span className="ml-1 text-[8px] text-amber-400">🔨free</span>}
+          </button>
         )
       })}
     </div>
@@ -167,11 +183,17 @@ function ActionBlock({ children }: { children: React.ReactNode }) {
 
 // ---- Guildhall ----
 
-function GuildhallActions({ onAction }: { onAction: () => void }) {
-  const { activePlayerId, players, professionalSlots, consultation } = useGameStore()
+function GuildhallActions({ onAction, onClose }: { onAction: () => void; onClose: () => void }) {
+  const {
+    activePlayerId, players, professionalSlots, consultation,
+    proposeNegotiate, resolveNegotiate, negotiatePending, negotiatesCompletedThisTurn,
+  } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
   const [consultRep, setConsultRep] = useState<RepType>('ARM')
   const [openProfId, setOpenProfId] = useState<string | null>(null)
+  const [negTarget, setNegTarget] = useState('')
+  const [negCardId, setNegCardId] = useState('')
+  const [negRepType, setNegRepType] = useState<RepType>('CON')
 
   if (!player) return null
 
@@ -240,7 +262,102 @@ function GuildhallActions({ onAction }: { onAction: () => void }) {
 
       <ActionBlock>
         <SectionTitle>3. Negotiate</SectionTitle>
-        <p className="text-xs text-parchment-400">Agree a direct resource swap with another player. No Stolen marker applied.</p>
+        <p className="text-xs text-parchment-400 mb-1.5">
+          Offer a card swap with another player. Action is only used if they accept.
+          {player.classId === 'paladin' && <span className="text-blue-300"> Honourable Trade: gain Rep on success.</span>}
+        </p>
+
+        {/* My proposal pending — waiting for target */}
+        {negotiatePending?.proposerId === player.id ? (
+          <div className="bg-amber-900/20 border border-amber-700/30 rounded-lg px-2 py-1.5 flex items-center justify-between gap-2">
+            <span className="text-[10px] text-amber-300">
+              ⏳ Waiting for {players.find(p => p.id === negotiatePending.targetId)?.name} to respond…
+            </span>
+            <button
+              onClick={() => resolveNegotiate(false)}
+              className="text-[9px] text-parchment-500 hover:text-red-300 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : negotiatePending ? (
+          /* Another trade is in progress — show blocked state */
+          <div className="text-[10px] text-parchment-600 italic">Another trade is pending…</div>
+        ) : (
+          /* Propose form */
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-parchment-400 flex-shrink-0">Offer to:</span>
+              {players.filter(p => p.id !== player.id).length === 0 ? (
+                <span className="text-[10px] text-parchment-600 italic">No other players</span>
+              ) : (
+                <select
+                  value={negTarget || players.find(p => p.id !== player.id)?.id || ''}
+                  onChange={e => setNegTarget(e.target.value)}
+                  className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 flex-1"
+                >
+                  {players.filter(p => p.id !== player.id).map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {player.hoard.length === 0 ? (
+              <div className="text-[10px] text-parchment-600 italic">Your hoard is empty — nothing to offer</div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-parchment-400 flex-shrink-0">Offer:</span>
+                  <select
+                    value={negCardId || player.hoard[0]?.id || ''}
+                    onChange={e => setNegCardId(e.target.value)}
+                    className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 flex-1"
+                  >
+                    {player.hoard.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.type}, ${c.value})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {player.classId === 'paladin' && (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-[10px] text-blue-300 font-semibold flex-shrink-0">Rep type:</span>
+                    {REP_TYPES.map(rt => (
+                      <button
+                        key={rt}
+                        onClick={() => setNegRepType(rt)}
+                        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${
+                          negRepType === rt
+                            ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                            : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
+                        }`}
+                      >
+                        {rt}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <button
+                  onClick={() => {
+                    proposeNegotiate(
+                      player.id,
+                      negTarget || players.find(p => p.id !== player.id)?.id || '',
+                      negCardId || player.hoard[0]?.id || '',
+                      player.classId === 'paladin' ? negRepType : undefined,
+                    )
+                    onAction()
+                  }}
+                  disabled={negotiatesCompletedThisTurn >= 1 || players.filter(p => p.id !== player.id).length === 0}
+                  className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50"
+                >
+                  Propose Trade →
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </ActionBlock>
     </>
   )
@@ -264,20 +381,24 @@ function ProfessionalUI({ profId, player, onDone }: { profId: string; player: Pl
         </button>
       </div>
     )
-    case 'p06': return (
-      <div className="space-y-1">
-        <div className="text-[10px] text-parchment-400">
-          Launder 1 per spent active token (max 4). You have {3 - player.activeTokens} spent token(s).
+    case 'p06': {
+      const totalSpent = store.players.reduce((sum, p) => sum + (2 - p.activeTokens), 0)
+      const launderCount = Math.min(4, totalSpent)
+      return (
+        <div className="space-y-1">
+          <div className="text-[10px] text-parchment-400">
+            Launder 1 per spent active token across all players (max 4). Total spent: {totalSpent}.
+          </div>
+          <button
+            onClick={() => { store.resourcefulRecruiter(player.id); onDone() }}
+            disabled={totalSpent === 0}
+            className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
+          >
+            Launder {launderCount}
+          </button>
         </div>
-        <button
-          onClick={() => { store.resourcefulRecruiter(player.id); onDone() }}
-          disabled={player.activeTokens >= 3}
-          className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
-        >
-          Launder {Math.min(4, 3 - player.activeTokens)}
-        </button>
-      </div>
-    )
+      )
+    }
     case 'p07': return <ShadySaboteurUI player={player} onDone={onDone} />
     case 'p08': return (
       <div className="space-y-1">
@@ -477,14 +598,14 @@ function ShadySaboteurUI({ player, onDone }: { player: Player; onDone: () => voi
   const { players, shadySaboteur } = useGameStore()
   const others = players.filter(p => p.id !== player.id)
   const [targetId, setTargetId] = useState(others[0]?.id ?? '')
-  const [winIdx, setWinIdx] = useState(0)
+  const [winIdx, setWinIdx] = useState(() => others[0]?.windows.findIndex(w => !!w.card) ?? 0)
   const target = players.find(p => p.id === targetId)
   const win = target?.windows[winIdx]
   const coinGain = win?.card ? Math.floor(win.card.value / 2) : 0
 
   return (
     <div className="space-y-1.5 text-[10px]">
-      <select value={targetId} onChange={e => { setTargetId(e.target.value); setWinIdx(0) }}
+      <select value={targetId} onChange={e => { setTargetId(e.target.value); setWinIdx(players.find(p => p.id === e.target.value)?.windows.findIndex(w => !!w.card) ?? 0) }}
         className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 w-full">
         {others.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
@@ -700,13 +821,13 @@ function TavernActions({ onAction }: { onAction: () => void }) {
 // ---- Wilderness ----
 
 function WildernessActions({ onAction }: { onAction: () => void }) {
-  const { activePlayerId, players, resourceDiscard, gather, forage, pitchCamp } = useGameStore()
+  const { activePlayerId, players, foragePeek, gather, forage, completeForage, pitchCamp } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
   const [selectedForage, setSelectedForage] = useState<string[]>([])
 
   if (!player) return null
 
-  const top4 = resourceDiscard.slice(0, 4)
+  const myForagePeek = foragePeek?.playerId === player.id ? foragePeek : null
 
   function toggleForage(id: string) {
     setSelectedForage(prev =>
@@ -728,13 +849,11 @@ function WildernessActions({ onAction }: { onAction: () => void }) {
 
       <ActionBlock>
         <SectionTitle>2. <Keyword name="Forage" /> 2</SectionTitle>
-        {top4.length === 0 ? (
-          <div className="text-xs text-parchment-600 italic">Resource discard is empty</div>
-        ) : (
+        {myForagePeek ? (
           <div className="space-y-2">
-            <div className="text-[10px] text-parchment-500">Top 4 of discard — select up to 2 to keep:</div>
+            <div className="text-[10px] text-parchment-500">4 cards drawn — select up to 2 to keep:</div>
             <div className="flex flex-wrap gap-2">
-              {top4.map(c => (
+              {myForagePeek.cards.map(c => (
                 <ResourceCardMini
                   key={c.id}
                   card={c}
@@ -745,10 +864,20 @@ function WildernessActions({ onAction }: { onAction: () => void }) {
               ))}
             </div>
             <button
-              onClick={() => { forage(player.id, selectedForage); setSelectedForage([]); onAction() }}
+              onClick={() => { completeForage(player.id, selectedForage); setSelectedForage([]) }}
               className="btn-primary text-xs px-2 py-0.5"
             >
-              Keep {selectedForage.length} card(s)
+              Keep {selectedForage.length} card{selectedForage.length !== 1 ? 's' : ''} → done
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <div className="text-[10px] text-parchment-500">Shuffle discard into deck, draw 4 — keep up to 2.</div>
+            <button
+              onClick={() => { forage(player.id); onAction() }}
+              className="btn-primary text-xs px-2 py-0.5"
+            >
+              Forage
             </button>
           </div>
         )}
@@ -776,15 +905,13 @@ function WildernessActions({ onAction }: { onAction: () => void }) {
 function BarracksActions({ onAction }: { onAction: () => void }) {
   const {
     activePlayerId, players, repairAllWindows, reportCrimeB,
-    hireBodyguard, peekTownCrier, completeTownCrier, townCrierPeek, activeVisitors,
+    hireBodyguard, peekTownCrier, townCrierPeek,
   } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
 
   const [reportRep, setReportRep] = useState<RepType>('ARM')
   const [reportTarget, setReportTarget] = useState(players.filter(p => p.id !== activePlayerId)[0]?.id ?? '')
   const [reportCard, setReportCard] = useState('')
-  const [crierPlaceId, setCrierPlaceId] = useState('')
-  const [crierSlotIdx, setCrierSlotIdx] = useState(0)
 
   if (!player) return null
 
@@ -853,7 +980,7 @@ function BarracksActions({ onAction }: { onAction: () => void }) {
               disabled={!reportCard || !reportTarget}
               className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
             >
-              Report — gain 1 {reportRep} rep
+              Report — gain {player.classId === 'paladin' ? 2 : 1} {reportRep} rep{player.classId === 'paladin' ? ' (Honourable Trade)' : ''}
             </button>
           </div>
         </div>
@@ -876,58 +1003,13 @@ function BarracksActions({ onAction }: { onAction: () => void }) {
         <SectionTitle>3. Town Crier</SectionTitle>
         {!crierActive ? (
           <button
-            onClick={() => peekTownCrier(player.id)}
+            onClick={() => { peekTownCrier(player.id); onAction() }}
             className="btn-secondary text-xs px-2 py-0.5"
           >
             Peek Top 3 Visitors
           </button>
         ) : (
-          <div className="space-y-1">
-            <div className="text-[10px] text-parchment-400">Choose one visitor to place:</div>
-            <div className="flex flex-wrap gap-1 mb-1">
-              {townCrierPeek!.cards.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => setCrierPlaceId(c.id)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                    crierPlaceId === c.id
-                      ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'
-                  }`}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
-            <div className="text-[10px] text-parchment-500 mb-1">Replace visitor slot:</div>
-            <div className="flex gap-1 mb-1">
-              {activeVisitors.map((v, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCrierSlotIdx(i)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                    crierSlotIdx === i
-                      ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
-                  }`}
-                >
-                  Slot {i + 1}{v ? ` (${v.name})` : ' (empty)'}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => {
-                if (!crierPlaceId) return
-                completeTownCrier(player.id, crierPlaceId, crierSlotIdx)
-                setCrierPlaceId('')
-                onAction()
-              }}
-              disabled={!crierPlaceId}
-              className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
-            >
-              Place Visitor
-            </button>
-          </div>
+          <div className="text-[10px] text-gold-400 italic">📯 Picker open — see the Town Crier modal.</div>
         )}
       </ActionBlock>
     </>
@@ -1021,7 +1103,10 @@ function CraftCardPicker({ player, onDone }: { player: Player; onDone: () => voi
   const { completeCraft } = useGameStore()
   const wo = player.workOrder!
   const req = parseRequirements(wo.recipe)
+  const discount = player.craftDiscount ?? 0
   const [selected, setSelected] = useState<string[]>([])
+  // Which requirement slot the player is waiving with the Forge of Ironpeak discount
+  const [discountedSlot, setDiscountedSlot] = useState<string | null>(null)
 
   // Cards available from hoard and non-broken windows
   const windowCards = player.windows
@@ -1030,20 +1115,41 @@ function CraftCardPicker({ player, onDone }: { player: Player; onDone: () => voi
 
   const allAvailable = [...player.hoard, ...windowCards]
   const selectedCards = selected.map(id => allAvailable.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
-  const canCraft = meetsRequirements(selectedCards, req)
+
+  // Build effective requirements with the chosen discount slot applied
+  const effectiveReq = { ...req }
+  if (discount > 0 && discountedSlot && effectiveReq[discountedSlot as keyof Requirements] > 0) {
+    effectiveReq[discountedSlot as keyof Requirements] -= 1
+  }
+  const canCraft = meetsRequirements(selectedCards, effectiveReq)
 
   function toggle(id: string) {
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   }
 
+  function handleSlotClick(type: string) {
+    if (discount <= 0) return
+    setDiscountedSlot(prev => prev === type ? null : type)
+  }
+
   return (
     <div className="space-y-2 text-[10px]">
-      <div>
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-parchment-200 font-semibold">{wo.name}</span>
-        <span className="text-gold-400 ml-2">+${wo.price}</span>
+        <span className="text-gold-400">+${wo.price}</span>
+        {discount > 0 && (
+          <span className="text-[9px] bg-amber-800/50 border border-amber-600/50 text-amber-300 rounded px-1.5 py-0.5">
+            🔨 Forge of Ironpeak active — click a requirement to waive 1
+          </span>
+        )}
       </div>
-      <div className="text-parchment-500">Recipe: {wo.recipe}</div>
-      <RequirementBar req={req} selected={selectedCards} />
+      <div className="text-parchment-500">Recipe: <RecipeDisplay recipe={wo.recipe} /></div>
+      <RequirementBar
+        req={req}
+        selected={selectedCards}
+        discountedSlot={discountedSlot}
+        onSlotClick={discount > 0 ? handleSlotClick : undefined}
+      />
       {player.hoard.length > 0 && (
         <>
           <div className="text-parchment-500 mt-1">Hoard:</div>
@@ -1084,7 +1190,10 @@ function ThievesGuildActions({ onAction }: { onAction: () => void }) {
 
   const [stealBreakMode, setStealBreakMode] = useState<'steal' | 'break'>('steal')
   const [targetId, setTargetId] = useState(players.filter(p => p.id !== activePlayerId)[0]?.id ?? '')
-  const [breakWinIdx, setBreakWinIdx] = useState(0)
+  const [breakWinIdx, setBreakWinIdx] = useState(() => {
+    const first = players.filter(p => p.id !== activePlayerId)[0]
+    return first?.windows.findIndex(w => w.status !== 'shuttered') ?? 0
+  })
   const [fenceCardId, setFenceCardId] = useState('')
 
   if (!player) return null
@@ -1111,7 +1220,11 @@ function ThievesGuildActions({ onAction }: { onAction: () => void }) {
             Steal 1
           </button>
           <button
-            onClick={() => setStealBreakMode('break')}
+            onClick={() => {
+              setStealBreakMode('break')
+              const t = players.find(p => p.id === targetId)
+              setBreakWinIdx(t?.windows.findIndex(w => w.status !== 'shuttered') ?? 0)
+            }}
             className={`text-xs px-2 py-0.5 rounded border transition-colors ${
               stealBreakMode === 'break'
                 ? 'bg-gold-500/30 border-gold-400 text-gold-200'
@@ -1125,7 +1238,11 @@ function ThievesGuildActions({ onAction }: { onAction: () => void }) {
         <div className="space-y-1">
           <select
             value={targetId}
-            onChange={e => setTargetId(e.target.value)}
+            onChange={e => {
+              setTargetId(e.target.value)
+              const t = players.find(p => p.id === e.target.value)
+              setBreakWinIdx(t?.windows.findIndex(w => w.status !== 'shuttered') ?? 0)
+            }}
             className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
           >
             {otherPlayers.map(p => (
@@ -1136,17 +1253,26 @@ function ThievesGuildActions({ onAction }: { onAction: () => void }) {
           </select>
 
           {stealBreakMode === 'break' && targetPlayer && (
-            <select
-              value={breakWinIdx}
-              onChange={e => setBreakWinIdx(Number(e.target.value))}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-            >
-              {targetPlayer.windows.map((w, i) => (
-                <option key={w.id} value={i}>
-                  Window {i + 1}{w.card ? ` — ${w.card.name}` : ''} [{w.status}]
-                </option>
-              ))}
-            </select>
+            <>
+              {targetPlayer.windows.every(w => w.status === 'shuttered') ? (
+                <div className="text-xs text-parchment-500 italic">All breakable windows are shuttered</div>
+              ) : (
+                <select
+                  value={breakWinIdx}
+                  onChange={e => setBreakWinIdx(Number(e.target.value))}
+                  className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
+                >
+                  {targetPlayer.windows.map((w, i) => {
+                    if (w.status === 'shuttered') return null
+                    return (
+                      <option key={w.id} value={i}>
+                        Window {i + 1}{w.card ? ` — ${w.card.name}` : ''}{w.status !== 'normal' ? ` [${w.status}]` : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+              )}
+            </>
           )}
 
           <button
@@ -1159,7 +1285,7 @@ function ThievesGuildActions({ onAction }: { onAction: () => void }) {
               }
               onAction()
             }}
-            disabled={!targetId}
+            disabled={!targetId || (stealBreakMode === 'break' && !!targetPlayer?.windows.every(w => w.status === 'shuttered'))}
             className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
           >
             {stealBreakMode === 'steal' ? 'Steal Random Card' : `Break Window ${breakWinIdx + 1}`}

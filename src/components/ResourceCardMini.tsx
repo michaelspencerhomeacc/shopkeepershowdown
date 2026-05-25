@@ -1,10 +1,10 @@
 import type { ResourceCard } from '../types'
 
 const TYPE_BAR: Record<string, string> = {
-  ARM: 'bg-orange-600/90',
-  CON: 'bg-blue-900/90',
-  TRI: 'bg-green-900/90',
-  TRG: 'bg-fuchsia-900/90',
+  ARM: 'bg-orange-600',
+  CON: 'bg-blue-600',
+  TRI: 'bg-green-600',
+  TRG: 'bg-pink-600',
 }
 
 interface Props {

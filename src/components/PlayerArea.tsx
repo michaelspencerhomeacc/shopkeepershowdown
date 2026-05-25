@@ -2,16 +2,17 @@ import { useState } from 'react'
 import type { Player, WindowSlot, WindowStatus } from '../types'
 import { useGameStore } from '../store/gameStore'
 import { TokenCounter } from './TokenCounter'
-import { ResourceCardTile } from './ResourceCardTile'
+import { ResourceCardTile, RecipeDisplay } from './ResourceCardTile'
 import { DiceRoller } from './DiceRoller'
 import { CLASSES } from '../data/classes'
 import { CardImage } from './CardImage'
+import { ClassAbilitiesPanel } from './ClassAbilitiesPanel'
 
-const REP_TYPES: Array<{ key: 'ARM' | 'CON' | 'TRI' | 'TRG'; label: string; color: string; icon: string }> = [
-  { key: 'ARM', label: 'ARM', color: 'bg-red-900/60', icon: '⚔️' },
-  { key: 'CON', label: 'CON', color: 'bg-green-900/60', icon: '🧪' },
-  { key: 'TRI', label: 'TRI', color: 'bg-purple-900/60', icon: '💎' },
-  { key: 'TRG', label: 'TRG', color: 'bg-amber-900/60', icon: '📦' },
+const REP_TYPES: Array<{ key: 'ARM' | 'CON' | 'TRI' | 'TRG'; label: string; color: string; textColor: string; icon: string }> = [
+  { key: 'ARM', label: 'ARM', color: 'bg-orange-700/50', textColor: 'text-orange-400', icon: '⚔️' },
+  { key: 'CON', label: 'CON', color: 'bg-blue-700/50',   textColor: 'text-blue-400',   icon: '🧪' },
+  { key: 'TRI', label: 'TRI', color: 'bg-green-700/50',  textColor: 'text-green-400',  icon: '💎' },
+  { key: 'TRG', label: 'TRG', color: 'bg-pink-700/50',   textColor: 'text-pink-400',   icon: '📦' },
 ]
 
 const STATUS_ICONS: Record<WindowStatus, string> = {
@@ -30,11 +31,13 @@ export function PlayerArea({ player, playerIndex }: Props) {
     adjustCoins, adjustRep, spendActiveToken, refreshActiveTokens,
     placeInWindow, moveFromWindowToHoard, discardResource,
     setWindowStatus, setWindowStolen, drawWorkOrders, chooseWorkOrder,
-    adjustDebt, adjustMomentum, transferNightWatcher, players,
+    adjustDebt, adjustMomentum, transferNightWatcher, reorderHoard, swapWindows,
+    players, currentTurnPlayerId,
   } = useGameStore()
 
   const [showHoard, setShowHoard] = useState(false)
   const [placingCardId, setPlacingCardId] = useState<string | null>(null)
+  const [dragOverHoardIdx, setDragOverHoardIdx] = useState<number | null>(null)
 
   const classInfo = CLASSES.find(c => c.id === player.classId)
   const pendingWorkOrders = (player as Player & { _pendingWorkOrders?: import('../types').WorkOrderCard[] })._pendingWorkOrders
@@ -47,6 +50,21 @@ export function PlayerArea({ player, playerIndex }: Props) {
       placeInWindow(player.id, placingCardId, windowIdx)
       setPlacingCardId(null)
     }
+  }
+
+  function handleWindowDrop(windowIdx: number, cardId: string, fromWindowIdx: number | null) {
+    if (fromWindowIdx !== null) {
+      swapWindows(player.id, fromWindowIdx, windowIdx)
+    } else {
+      placeInWindow(player.id, cardId, windowIdx)
+    }
+    setPlacingCardId(null)
+  }
+
+  function handleRepairForCoins(windowIdx: number) {
+    if (player.coins < 3) return
+    adjustCoins(player.id, -3)
+    setWindowStatus(player.id, windowIdx, 'normal')
   }
 
   function handleDrawWorkOrders() {
@@ -92,38 +110,43 @@ export function PlayerArea({ player, playerIndex }: Props) {
             onIncrement={() => adjustRep(player.id, rt.key, 1)}
             onDecrement={() => adjustRep(player.id, rt.key, -1)}
             color={rt.color}
+            textColor={rt.textColor}
           />
         ))}
       </div>
 
-      {/* Active Tokens */}
+      {/* Active Tokens — hidden for Monk (they use Momentum instead) */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-parchment-400">Active:</span>
-        <div className="flex gap-1">
-          {Array.from({ length: 3 }, (_, i) => (
-            <div
-              key={i}
-              className={`w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all
-                ${i < player.activeTokens
-                  ? 'border-gold-400 bg-gold-400/30'
-                  : 'border-parchment-700/40 bg-transparent opacity-40'}`}
-              onClick={() => i < player.activeTokens
-                ? spendActiveToken(player.id)
-                : refreshActiveTokens(player.id)
-              }
-              title={i < player.activeTokens ? 'Spend token' : 'Refresh tokens'}
-            >
-              {i < player.activeTokens && <div className="w-2 h-2 rounded-full bg-gold-400" />}
+        {player.classId !== 'monk' && (
+          <>
+            <span className="text-xs text-parchment-400">Active:</span>
+            <div className="flex gap-1">
+              {Array.from({ length: 2 }, (_, i) => (
+                <div
+                  key={i}
+                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all
+                    ${i < player.activeTokens
+                      ? 'border-gold-400 bg-gold-400/30'
+                      : 'border-parchment-700/40 bg-transparent opacity-40'}`}
+                  onClick={() => i < player.activeTokens
+                    ? spendActiveToken(player.id)
+                    : refreshActiveTokens(player.id)
+                  }
+                  title={i < player.activeTokens ? 'Spend token' : 'Refresh tokens'}
+                >
+                  {i < player.activeTokens && <div className="w-2 h-2 rounded-full bg-gold-400" />}
+                </div>
+              ))}
+              <button
+                onClick={() => refreshActiveTokens(player.id)}
+                className="text-xs text-parchment-500 hover:text-parchment-300 ml-1"
+                title="Refresh all active tokens"
+              >
+                ↺
+              </button>
             </div>
-          ))}
-          <button
-            onClick={() => refreshActiveTokens(player.id)}
-            className="text-xs text-parchment-500 hover:text-parchment-300 ml-1"
-            title="Refresh all active tokens"
-          >
-            ↺
-          </button>
-        </div>
+          </>
+        )}
 
         {/* Class-specific tokens */}
         {player.classId === 'warlock' && (
@@ -163,10 +186,13 @@ export function PlayerArea({ player, playerIndex }: Props) {
               index={i}
               isTarget={placingCardId !== null}
               onClick={() => handleWindowClick(i)}
+              onDrop={(cardId, fromWindowIdx) => handleWindowDrop(i, cardId, fromWindowIdx)}
               onMoveToHoard={() => moveFromWindowToHoard(player.id, i)}
               onDiscard={() => win.card && discardResource(player.id, win.card.id, 'window', i)}
               onSetStatus={(status) => setWindowStatus(player.id, i, status)}
               onToggleStolen={() => win.card && setWindowStolen(player.id, i, !win.stolen)}
+              onRepairForCoins={() => handleRepairForCoins(i)}
+              canRepair={player.coins >= 3}
             />
           ))}
         </div>
@@ -183,31 +209,64 @@ export function PlayerArea({ player, playerIndex }: Props) {
           </button>
         </div>
         {showHoard && (
-          <div className="flex flex-wrap gap-2">
-            {player.hoard.map(card => (
-              <ResourceCardTile
+          <div
+            className="flex flex-wrap gap-2 min-h-[40px] rounded-lg transition-colors"
+            onDragOver={e => {
+              if (e.dataTransfer.types.includes('application/window-index')) e.preventDefault()
+            }}
+            onDrop={e => {
+              const winIdxStr = e.dataTransfer.getData('application/window-index')
+              if (winIdxStr !== '') {
+                e.preventDefault()
+                moveFromWindowToHoard(player.id, parseInt(winIdxStr))
+              }
+            }}
+          >
+            {player.hoard.map((card, idx) => (
+              <div
                 key={card.id}
-                card={card}
-                size="sm"
-                stolen={player.stolenHoardCardIds.includes(card.id)}
-                actions={
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setPlacingCardId(card.id)}
-                      className="text-[8px] bg-gold-600/80 hover:bg-gold-500 text-ink-900 font-bold rounded px-1 py-0.5"
-                      title="Place in window"
-                    >
-                      Window
-                    </button>
-                    <button
-                      onClick={() => discardResource(player.id, card.id, 'hoard')}
-                      className="text-[8px] bg-red-900/80 hover:bg-red-800 text-red-200 font-bold rounded px-1 py-0.5"
-                    >
-                      Discard
-                    </button>
-                  </div>
-                }
-              />
+                onDragOver={e => { e.preventDefault(); setDragOverHoardIdx(idx) }}
+                onDragLeave={() => setDragOverHoardIdx(null)}
+                onDrop={e => {
+                  e.preventDefault()
+                  setDragOverHoardIdx(null)
+                  const winIdxStr = e.dataTransfer.getData('application/window-index')
+                  if (winIdxStr !== '') {
+                    // Window card dropped onto hoard → move to hoard
+                    moveFromWindowToHoard(player.id, parseInt(winIdxStr))
+                    return
+                  }
+                  const fromIdxStr = e.dataTransfer.getData('application/hoard-index')
+                  const fromIdx = fromIdxStr !== '' ? parseInt(fromIdxStr) : -1
+                  if (fromIdx >= 0 && fromIdx !== idx) reorderHoard(player.id, fromIdx, idx)
+                }}
+                className={`rounded transition-all ${dragOverHoardIdx === idx ? 'ring-2 ring-gold-400 ring-offset-1 ring-offset-ink-900' : ''}`}
+              >
+                <ResourceCardTile
+                  card={card}
+                  size="sm"
+                  stolen={player.stolenHoardCardIds.includes(card.id)}
+                  dragCardId={card.id}
+                  extraDragData={{ 'application/hoard-index': String(idx) }}
+                  actions={
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setPlacingCardId(card.id)}
+                        className="text-[8px] bg-gold-600/80 hover:bg-gold-500 text-ink-900 font-bold rounded px-1 py-0.5"
+                        title="Place in window"
+                      >
+                        Window
+                      </button>
+                      <button
+                        onClick={() => discardResource(player.id, card.id, 'hoard')}
+                        className="text-[8px] bg-red-900/80 hover:bg-red-800 text-red-200 font-bold rounded px-1 py-0.5"
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  }
+                />
+              </div>
             ))}
             {player.hoard.length === 0 && (
               <div className="text-xs text-parchment-600 italic">Empty hoard</div>
@@ -242,7 +301,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
                 <CardImage src={wo.imageFile} alt={wo.name} className="w-14 h-14 rounded object-cover flex-shrink-0" fallbackText="" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-parchment-100 leading-tight">{wo.name}</div>
-                  <div className="text-xs text-parchment-400 mt-0.5">Recipe: {wo.recipe}</div>
+                  <div className="text-xs text-parchment-400 mt-0.5">Recipe: <RecipeDisplay recipe={wo.recipe} /></div>
                   <div className="text-sm font-bold text-gold-400 mt-1">${wo.price}</div>
                 </div>
               </button>
@@ -255,7 +314,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
             <CardImage src={player.workOrder.imageFile} alt={player.workOrder.name} className="w-12 h-12 rounded object-cover flex-shrink-0" fallbackText="" />
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold text-parchment-100 leading-tight">{player.workOrder.name}</div>
-              <div className="text-[11px] text-parchment-400 mt-0.5">Recipe: {player.workOrder.recipe}</div>
+              <div className="text-[11px] text-parchment-400 mt-0.5">Recipe: <RecipeDisplay recipe={player.workOrder.recipe} /></div>
               <div className="text-xs font-bold text-gold-400 mt-0.5">${player.workOrder.price}</div>
             </div>
           </div>
@@ -298,6 +357,9 @@ export function PlayerArea({ player, playerIndex }: Props) {
           </div>
         </div>
       )}
+
+      {/* Class abilities */}
+      <ClassAbilitiesPanel player={player} isActiveTurn={player.id === currentTurnPlayerId} />
     </div>
   )
 }
@@ -307,15 +369,19 @@ interface WindowSlotProps {
   index: number
   isTarget: boolean
   onClick: () => void
+  onDrop: (cardId: string, fromWindowIdx: number | null) => void
   onMoveToHoard: () => void
   onDiscard: () => void
   onSetStatus: (status: WindowStatus) => void
   onToggleStolen: () => void
+  onRepairForCoins: () => void
+  canRepair: boolean
 }
 
 function WindowSlotDisplay({
-  slot, index, isTarget, onClick,
+  slot, index, isTarget, onClick, onDrop,
   onMoveToHoard, onDiscard, onSetStatus, onToggleStolen,
+  onRepairForCoins, canRepair,
 }: WindowSlotProps) {
   const statusOverlay: Record<WindowStatus, string> = {
     normal: '',
@@ -323,28 +389,67 @@ function WindowSlotDisplay({
     shuttered: 'border-gray-500 bg-gray-900/40',
   }
 
+  const [dragOver, setDragOver] = useState(false)
+
+  function handleDragOver(e: React.DragEvent) {
+    // Accept any hoard card drop (occupied windows swap the existing card back to hoard)
+    e.preventDefault(); setDragOver(true)
+  }
+  function handleDragLeave() { setDragOver(false) }
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault(); setDragOver(false)
+    const cardId = e.dataTransfer.getData('text/plain')
+    const winIdxStr = e.dataTransfer.getData('application/window-index')
+    const fromWindowIdx = winIdxStr !== '' ? parseInt(winIdxStr) : null
+    if (cardId) onDrop(cardId, fromWindowIdx)
+  }
+
   if (!slot.card) {
     return (
       <div
         className={`zone w-[80px] h-[112px] flex flex-col items-center justify-center cursor-pointer transition-all
-          ${isTarget ? 'border-gold-400/80 bg-gold-400/10 hover:bg-gold-400/20' : 'hover:border-parchment-600/60'}
+          ${isTarget || dragOver ? 'border-gold-400/80 bg-gold-400/10' : 'hover:border-parchment-600/60'}
           ${statusOverlay[slot.status]}`}
         onClick={onClick}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         title={`Window ${index + 1} — ${slot.status}`}
       >
         <span className="text-xs text-parchment-600">{index + 1}</span>
-        {slot.status !== 'normal' && (
+        {slot.status === 'broken' ? (
+          <div className="flex flex-col items-center gap-1 mt-1">
+            <span className="text-sm">{STATUS_ICONS.broken}</span>
+            <button
+              onClick={e => { e.stopPropagation(); onRepairForCoins() }}
+              disabled={!canRepair}
+              className="text-[7px] bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 rounded px-1 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+              title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
+            >
+              🔧 3$
+            </button>
+          </div>
+        ) : slot.status !== 'normal' ? (
           <span className="text-sm">{STATUS_ICONS[slot.status]}</span>
-        )}
+        ) : null}
       </div>
     )
   }
 
   return (
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={`rounded-lg transition-all ${dragOver ? 'ring-2 ring-gold-400' : ''}`}
+      style={{ display: 'inline-block' }}
+    >
     <ResourceCardTile
       card={slot.card}
       size="sm"
       stolen={slot.stolen}
+      dragCardId={slot.card.id}
+      extraDragData={{ 'application/window-index': String(index) }}
       overlay={
         slot.status !== 'normal' ? (
           <div className={`absolute inset-0 flex items-end justify-center pb-1 text-sm ${statusOverlay[slot.status]} rounded-lg`}>
@@ -370,13 +475,24 @@ function WindowSlotDisplay({
             </button>
           </div>
           <div className="flex gap-0.5">
-            <button
-              onClick={e => { e.stopPropagation(); onSetStatus(slot.status === 'broken' ? 'normal' : 'broken') }}
-              className="text-[7px] bg-orange-900/80 hover:bg-orange-800 text-orange-200 rounded px-1 py-0.5"
-              title="Toggle broken"
-            >
-              {slot.status === 'broken' ? 'Fix' : '🔨'}
-            </button>
+            {slot.status === 'broken' ? (
+              <button
+                onClick={e => { e.stopPropagation(); onRepairForCoins() }}
+                disabled={!canRepair}
+                className="text-[7px] bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 rounded px-1 py-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
+              >
+                🔧 3$
+              </button>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); onSetStatus('broken') }}
+                className="text-[7px] bg-orange-900/80 hover:bg-orange-800 text-orange-200 rounded px-1 py-0.5"
+                title="Mark broken"
+              >
+                🔨
+              </button>
+            )}
             <button
               onClick={e => { e.stopPropagation(); onSetStatus(slot.status === 'shuttered' ? 'normal' : 'shuttered') }}
               className="text-[7px] bg-gray-900/80 hover:bg-gray-800 text-gray-200 rounded px-1 py-0.5"
@@ -395,5 +511,6 @@ function WindowSlotDisplay({
         </div>
       }
     />
+    </div>
   )
 }

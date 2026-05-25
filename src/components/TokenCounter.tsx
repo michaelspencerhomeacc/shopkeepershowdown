@@ -4,6 +4,7 @@ interface Props {
   onIncrement: () => void
   onDecrement: () => void
   color?: string
+  textColor?: string
   icon?: string
   min?: number
   max?: number
@@ -11,11 +12,11 @@ interface Props {
 
 export function TokenCounter({
   label, value, onIncrement, onDecrement,
-  color = 'bg-parchment-800/30', icon, min = 0, max = 999,
+  color = 'bg-parchment-800/30', textColor = 'text-parchment-400', icon, min = 0, max = 999,
 }: Props) {
   return (
     <div className="flex items-center gap-1">
-      <span className="text-xs text-parchment-400 min-w-[2rem]">{label}</span>
+      <span className={`text-xs font-semibold min-w-[2rem] ${textColor}`}>{label}</span>
       <div className={`flex items-center gap-1 rounded-full px-2 py-0.5 ${color}`}>
         <button
           onClick={onDecrement}
