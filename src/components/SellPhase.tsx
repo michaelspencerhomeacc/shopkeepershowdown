@@ -174,7 +174,7 @@ export function SellPhase({ onDone }: { onDone?: () => void } = {}) {
                         <ResourceCardMini
                           key={opt.windowIdx}
                           card={opt.card}
-                          size="sm"
+                          size="lg"
                           selected={assignments.get(vi) === opt.windowIdx}
                           onClick={() => assign(vi, opt.windowIdx)}
                         />

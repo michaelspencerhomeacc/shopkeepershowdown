@@ -4,6 +4,7 @@ import type { Location, Player, GameState, DuelStake, ResourceCard } from '../ty
 import { LocationActionPanel, DrawnCardsToast } from './LocationActionPanel'
 import { SellPhase } from './SellPhase'
 import { ResourceCardMini } from './ResourceCardMini'
+import { VisitorCardMini } from './VisitorCardMini'
 import { RecipeDisplay } from './ResourceCardTile'
 
 export const LOCATIONS: { id: Location; label: string }[] = [
@@ -571,30 +572,30 @@ export function SharedBoard() {
         if (!crierPlayer) return null
         return (
           <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
-            <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 space-y-3">
+            <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-lg w-full mx-4 space-y-4">
               <div className="text-base font-display font-bold text-gold-300 text-center">📯 Town Crier</div>
               <div className="text-xs text-parchment-400 text-center">{crierPlayer.name} — choose a visitor to place on the board:</div>
-              <div className="space-y-1">
-                <div className="text-[10px] text-parchment-500 uppercase tracking-wide">Peeked visitors</div>
-                <div className="flex flex-wrap gap-1">
+
+              {/* Visitor card image picker */}
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">Peeked visitors</div>
+                <div className="flex gap-3 overflow-x-auto pb-1">
                   {townCrierPeek.cards.map(c => (
-                    <button
+                    <VisitorCardMini
                       key={c.id}
+                      card={c}
+                      size="lg"
+                      selected={crierPlaceId === c.id}
                       onClick={() => setCrierPlaceId(c.id)}
-                      className={`text-xs px-2 py-1 rounded border transition-colors ${
-                        crierPlaceId === c.id
-                          ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                          : 'bg-ink-700 border-parchment-700/30 text-parchment-300 hover:border-parchment-500'
-                      }`}
-                    >
-                      {c.name} <span className="text-parchment-500">({c.demand})</span>
-                    </button>
+                    />
                   ))}
                 </div>
               </div>
-              <div className="space-y-1">
-                <div className="text-[10px] text-parchment-500 uppercase tracking-wide">Replace visitor slot</div>
-                <div className="flex flex-wrap gap-1">
+
+              {/* Slot selector */}
+              <div className="space-y-1.5">
+                <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">Replace visitor slot</div>
+                <div className="flex flex-wrap gap-1.5">
                   {activeVisitors.map((v, i) => (
                     <button
                       key={i}
@@ -610,6 +611,7 @@ export function SharedBoard() {
                   ))}
                 </div>
               </div>
+
               <button
                 onClick={() => {
                   if (!crierPlaceId) return

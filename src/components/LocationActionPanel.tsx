@@ -3,6 +3,7 @@ import type { Location, RepType, Player, ResourceCard, ResourceType } from '../t
 import { useGameStore } from '../store/gameStore'
 import { Keyword } from './Keyword'
 import { ResourceCardMini } from './ResourceCardMini'
+import { CardPickerGrid } from './CardPickerGrid'
 import { RecipeDisplay } from './ResourceCardTile'
 import { parseRequirements, meetsRequirements, type Requirements } from '../utils/requirements'
 
@@ -307,18 +308,13 @@ function GuildhallActions({ onAction, onClose }: { onAction: () => void; onClose
               <div className="text-[10px] text-parchment-600 italic">Your hoard is empty — nothing to offer</div>
             ) : (
               <>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-parchment-400 flex-shrink-0">Offer:</span>
-                  <select
-                    value={negCardId || player.hoard[0]?.id || ''}
-                    onChange={e => setNegCardId(e.target.value)}
-                    className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 flex-1"
-                  >
-                    {player.hoard.map(c => (
-                      <option key={c.id} value={c.id}>{c.name} ({c.type}, ${c.value})</option>
-                    ))}
-                  </select>
-                </div>
+                <CardPickerGrid
+                  label="Offer card"
+                  resourceCards={player.hoard}
+                  selectedId={negCardId || player.hoard[0]?.id || ''}
+                  onSelect={setNegCardId}
+                  size="lg"
+                />
 
                 {player.classId === 'paladin' && (
                   <div className="flex items-center gap-1.5 flex-wrap">
@@ -433,7 +429,7 @@ function AlluringAlchemistUI({ player, onDone }: { player: Player; onDone: () =>
       <div className="text-parchment-400">Hoard → trade up to 3:</div>
       <div className="flex flex-wrap gap-1.5">
         {player.hoard.map(c => (
-          <ResourceCardMini key={c.id} card={c} size="sm"
+          <ResourceCardMini key={c.id} card={c} size="md"
             selected={selHoard.includes(c.id)}
             onClick={() => setSelHoard(prev => toggle(prev, c.id, 3))} />
         ))}
@@ -441,7 +437,7 @@ function AlluringAlchemistUI({ player, onDone }: { player: Player; onDone: () =>
       <div className="text-parchment-400">Flea Market → receive:</div>
       <div className="flex flex-wrap gap-1.5">
         {fleaMarket.map((c, i) => c ? (
-          <ResourceCardMini key={i} card={c} size="sm"
+          <ResourceCardMini key={i} card={c} size="md"
             selected={selFlea.includes(i)}
             onClick={() => setSelFlea(prev => toggle(prev, i, 3))} />
         ) : null)}
@@ -497,7 +493,7 @@ function BrazenBountyHunterUI({ player, onDone }: { player: Player; onDone: () =
       <div className="text-parchment-500">or pick 1 resource from their hoard:</div>
       <div className="flex flex-wrap gap-1.5">
         {target?.hoard.map(c => (
-          <ResourceCardMini key={c.id} card={c} size="sm"
+          <ResourceCardMini key={c.id} card={c} size="md"
             selected={cardId === c.id}
             onClick={() => setCardId(prev => prev === c.id ? '' : c.id)} />
         ))}
@@ -524,7 +520,7 @@ function CharismaticClerkUI({ player, onDone }: { player: Player; onDone: () => 
       <div className="text-parchment-400">Pick flea market card to distribute to a visitor. Gain its rep type.</div>
       <div className="flex flex-wrap gap-1.5">
         {available.map(({ c, i }) => c && (
-          <ResourceCardMini key={i} card={c} size="sm"
+          <ResourceCardMini key={i} card={c} size="md"
             selected={slotIdx === i}
             onClick={() => setSlotIdx(i)} />
         ))}
@@ -568,7 +564,7 @@ function PolitePromoterUI({ player, onDone }: { player: Player; onDone: () => vo
           <div className="text-parchment-400">Hoard:</div>
           <div className="flex flex-wrap gap-1.5">
             {player.hoard.map(c => (
-              <ResourceCardMini key={c.id} card={c} size="sm"
+              <ResourceCardMini key={c.id} card={c} size="md"
                 selected={selHoard.includes(c.id)}
                 onClick={() => setSelHoard(prev => toggle(prev, c.id, 2))} />
             ))}
@@ -576,7 +572,7 @@ function PolitePromoterUI({ player, onDone }: { player: Player; onDone: () => vo
           <div className="text-parchment-400">Flea Market:</div>
           <div className="flex flex-wrap gap-1.5">
             {fleaMarket.map((c, i) => c ? (
-              <ResourceCardMini key={i} card={c} size="sm"
+              <ResourceCardMini key={i} card={c} size="md"
                 selected={selFlea.includes(i)}
                 onClick={() => setSelFlea(prev => toggle(prev, i, 2))} />
             ) : null)}
@@ -713,42 +709,52 @@ function TavernActions({ onAction }: { onAction: () => void }) {
 
       <ActionBlock>
         <SectionTitle>2. <Keyword name="Auction" /> 1</SectionTitle>
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={auctionZone}
-              onChange={e => setAuctionZone(e.target.value as 'hoard' | 'window')}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200"
-            >
-              <option value="hoard">From Hoard</option>
-              <option value="window">From Window</option>
-            </select>
-
-            {auctionZone === 'hoard' ? (
-              <select
-                value={auctionCardId}
-                onChange={e => setAuctionCardId(e.target.value)}
-                className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200"
+        <div className="space-y-2">
+          {/* Zone toggle */}
+          <div className="flex gap-1">
+            {(['hoard', 'window'] as const).map(zone => (
+              <button
+                key={zone}
+                onClick={() => setAuctionZone(zone)}
+                className={`text-xs px-2 py-0.5 rounded border transition-colors capitalize ${
+                  auctionZone === zone
+                    ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
+                }`}
               >
-                <option value="">— pick card —</option>
-                {player.hoard.map(c => (
-                  <option key={c.id} value={c.id}>{c.name} ({c.type} ${c.value})</option>
-                ))}
-              </select>
-            ) : (
-              <select
-                value={auctionWinIdx}
-                onChange={e => setAuctionWinIdx(Number(e.target.value))}
-                className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200"
-              >
-                {player.windows.map((w, i) => (
-                  <option key={w.id} value={i} disabled={!w.card}>
-                    Window {i + 1}{w.card ? ` — ${w.card.name}` : ' (empty)'}
-                  </option>
-                ))}
-              </select>
-            )}
+                From {zone}
+              </button>
+            ))}
           </div>
+
+          {auctionZone === 'hoard' ? (
+            <CardPickerGrid
+              resourceCards={player.hoard}
+              selectedId={auctionCardId}
+              onSelect={setAuctionCardId}
+              size="lg"
+              emptyText="Hoard is empty"
+            />
+          ) : (
+            /* Window slot buttons — selecting a slot, not a card image */
+            <div className="flex flex-wrap gap-1">
+              {player.windows.map((w, i) => (
+                <button
+                  key={w.id}
+                  onClick={() => w.card && setAuctionWinIdx(i)}
+                  disabled={!w.card}
+                  className={`text-xs px-2 py-1 rounded border transition-colors disabled:opacity-40 ${
+                    auctionWinIdx === i
+                      ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
+                  }`}
+                >
+                  Slot {i + 1}{w.card ? ` — ${w.card.name}` : ' (empty)'}
+                </button>
+              ))}
+            </div>
+          )}
+
           <button
             onClick={() => {
               const cid = auctionZone === 'hoard' ? auctionCardId : (player.windows[auctionWinIdx]?.card?.id ?? '')
@@ -773,7 +779,7 @@ function TavernActions({ onAction }: { onAction: () => void }) {
               <div className="text-[10px] text-parchment-500 mb-1">Hoard — select up to 2:</div>
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {player.hoard.map(c => (
-                  <ResourceCardMini key={c.id} card={c} size="sm"
+                  <ResourceCardMini key={c.id} card={c} size="md"
                     selected={selectedHoardIds.includes(c.id)}
                     onClick={() => toggleHoardCard(c.id)} />
                 ))}
@@ -785,7 +791,7 @@ function TavernActions({ onAction }: { onAction: () => void }) {
               <div className="text-[10px] text-parchment-500 mb-1">Windows — select up to 2:</div>
               <div className="flex flex-wrap gap-1.5 mb-2">
                 {player.windows.filter(w => w.card && w.status !== 'broken').map(w => (
-                  <ResourceCardMini key={w.card!.id} card={w.card!} size="sm"
+                  <ResourceCardMini key={w.card!.id} card={w.card!} size="md"
                     selected={selectedHoardIds.includes(w.card!.id)}
                     onClick={() => toggleHoardCard(w.card!.id)} />
                 ))}
@@ -795,7 +801,7 @@ function TavernActions({ onAction }: { onAction: () => void }) {
           <div className="text-[10px] text-parchment-500 mb-1">Flea Market — select matching:</div>
           <div className="flex flex-wrap gap-1.5 mb-1">
             {fleaMarket.map((c, i) => c ? (
-              <ResourceCardMini key={i} card={c} size="sm"
+              <ResourceCardMini key={i} card={c} size="md"
                 selected={selectedFleaIdxs.includes(i)}
                 onClick={() => toggleFleaSlot(i)} />
             ) : null)}
@@ -951,25 +957,30 @@ function BarracksActions({ onAction }: { onAction: () => void }) {
                 </button>
               ))}
             </div>
-            <select
-              value={reportTarget}
-              onChange={e => { setReportTarget(e.target.value); setReportCard('') }}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-            >
+            {/* Target player selector stays as buttons */}
+            <div className="flex flex-wrap gap-1">
               {players.filter(p => p.id !== player.id).map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+                <button
+                  key={p.id}
+                  onClick={() => { setReportTarget(p.id); setReportCard('') }}
+                  className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                    reportTarget === p.id
+                      ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
+                  }`}
+                >
+                  {p.name}
+                </button>
               ))}
-            </select>
-            <select
-              value={reportCard}
-              onChange={e => setReportCard(e.target.value)}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-            >
-              <option value="">— stolen card —</option>
-              {targetStolenCards.map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.type})</option>
-              ))}
-            </select>
+            </div>
+            <CardPickerGrid
+              label="Stolen card to report"
+              resourceCards={targetStolenCards}
+              selectedId={reportCard}
+              onSelect={setReportCard}
+              size="lg"
+              emptyText="No stolen cards held by this player"
+            />
             <button
               onClick={() => {
                 if (!reportCard) return
@@ -1038,7 +1049,7 @@ function WorkshopActions({ onAction }: { onAction: () => void }) {
               <ResourceCardMini
                 key={c.id}
                 card={c}
-                size="sm"
+                size="md"
                 onClick={() => { takeFromFleaMarket(player.id, i); onAction() }}
               />
             ) : null
@@ -1155,7 +1166,7 @@ function CraftCardPicker({ player, onDone }: { player: Player; onDone: () => voi
           <div className="text-parchment-500 mt-1">Hoard:</div>
           <div className="flex flex-wrap gap-2">
             {player.hoard.map(c => (
-              <ResourceCardMini key={c.id} card={c} size="sm" selected={selected.includes(c.id)} onClick={() => toggle(c.id)} />
+              <ResourceCardMini key={c.id} card={c} size="md" selected={selected.includes(c.id)} onClick={() => toggle(c.id)} />
             ))}
           </div>
         </>
@@ -1165,7 +1176,7 @@ function CraftCardPicker({ player, onDone }: { player: Player; onDone: () => voi
           <div className="text-parchment-500 mt-1">Windows:</div>
           <div className="flex flex-wrap gap-2">
             {windowCards.map(c => (
-              <ResourceCardMini key={c.id} card={c} size="sm" selected={selected.includes(c.id)} onClick={() => toggle(c.id)} />
+              <ResourceCardMini key={c.id} card={c} size="md" selected={selected.includes(c.id)} onClick={() => toggle(c.id)} />
             ))}
           </div>
         </>
@@ -1308,7 +1319,7 @@ function ThievesGuildActions({ onAction }: { onAction: () => void }) {
               {stolenHoardCards.map(c => {
                 const blocked = !!(topFlea && c.type === topFlea.type)
                 return (
-                  <ResourceCardMini key={c.id} card={c} size="sm"
+                  <ResourceCardMini key={c.id} card={c} size="lg"
                     selected={fenceCardId === c.id}
                     disabled={blocked}
                     onClick={() => !blocked && setFenceCardId(prev => prev === c.id ? '' : c.id)} />

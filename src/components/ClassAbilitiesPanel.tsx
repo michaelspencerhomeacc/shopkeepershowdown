@@ -3,6 +3,7 @@ import type { Player, RepType, ShamanPatienceEffects, DuelStake, AmbushCard } fr
 import { LOCATIONS } from './SharedBoard'
 import { useGameStore } from '../store/gameStore'
 import { ResourceCardMini } from './ResourceCardMini'
+import { CardPickerGrid } from './CardPickerGrid'
 
 interface Props {
   player: Player
@@ -475,7 +476,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {player.hoard.map(c => (
-                        <ResourceCardMini key={c.id} card={c} size="sm" selected={tradeHoardIds.includes(c.id)} onClick={() => toggleTradeHoard(c.id)} />
+                        <ResourceCardMini key={c.id} card={c} size="md" selected={tradeHoardIds.includes(c.id)} onClick={() => toggleTradeHoard(c.id)} />
                       ))}
                     </div>
                   )}
@@ -487,7 +488,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {fleaOptions.map(({ c, i }) => (
-                        <ResourceCardMini key={i} card={c!} size="sm" selected={tradeFleaIdxs.includes(i)} onClick={() => toggleTradeFlea(i)} />
+                        <ResourceCardMini key={i} card={c!} size="md" selected={tradeFleaIdxs.includes(i)} onClick={() => toggleTradeFlea(i)} />
                       ))}
                     </div>
                   )}
@@ -678,30 +679,27 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
               </label>
               {patienceEffects.trade1 !== undefined && (
                 <div className="mt-1 pl-6 space-y-1">
-                  <div className="text-[11px] text-parchment-500">Your card:</div>
-                  {player.hoard.length === 0 ? (
-                    <div className="text-[11px] text-parchment-600 italic">Hoard empty</div>
-                  ) : (
-                    <select
-                      value={patienceTradeCardId || player.hoard[0]?.id || ''}
-                      onChange={e => { setPatienceTradeCardId(e.target.value); setPatienceEffects(p => ({ ...p, trade1: { playerCardId: e.target.value, fleaSlotIdx: patienceTradeFleaIdx } })) }}
-                      className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-                    >
-                      {player.hoard.map(c => <option key={c.id} value={c.id}>{c.name} (${c.value})</option>)}
-                    </select>
-                  )}
-                  <div className="text-[11px] text-parchment-500">Flea Market card:</div>
-                  {fleaOptions.length === 0 ? (
-                    <div className="text-[11px] text-parchment-600 italic">Flea Market empty</div>
-                  ) : (
-                    <select
-                      value={patienceTradeFleaIdx}
-                      onChange={e => { setPatienceTradeFleaIdx(Number(e.target.value)); setPatienceEffects(p => ({ ...p, trade1: { playerCardId: patienceTradeCardId || player.hoard[0]?.id || '', fleaSlotIdx: Number(e.target.value) } })) }}
-                      className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-                    >
-                      {fleaOptions.map(({ c, i }) => <option key={i} value={i}>{c!.name} (${c!.value})</option>)}
-                    </select>
-                  )}
+                  <CardPickerGrid
+                    label="Your card"
+                    resourceCards={player.hoard}
+                    selectedId={patienceTradeCardId || player.hoard[0]?.id || ''}
+                    onSelect={id => { setPatienceTradeCardId(id); setPatienceEffects(p => ({ ...p, trade1: { playerCardId: id, fleaSlotIdx: patienceTradeFleaIdx } })) }}
+                    size="lg"
+                    emptyText="Hoard empty"
+                  />
+                  <CardPickerGrid
+                    label="Flea Market card"
+                    resourceCards={fleaOptions.map(({ c }) => c!)}
+                    selectedId={fleaOptions.find(({ i }) => i === patienceTradeFleaIdx)?.c?.id ?? ''}
+                    onSelect={id => {
+                      const opt = fleaOptions.find(({ c }) => c!.id === id)
+                      if (!opt) return
+                      setPatienceTradeFleaIdx(opt.i)
+                      setPatienceEffects(p => ({ ...p, trade1: { playerCardId: patienceTradeCardId || player.hoard[0]?.id || '', fleaSlotIdx: opt.i } }))
+                    }}
+                    size="lg"
+                    emptyText="Flea Market empty"
+                  />
                 </div>
               )}
             </div>
@@ -854,40 +852,39 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
           <div className="text-[11px] text-parchment-500">
             Your first Negotiate is done. Use this free second trade — no action cost.
           </div>
-          <div className="text-[11px] text-parchment-400">Offer card from your hoard:</div>
-          {player.hoard.length === 0 ? (
-            <div className="text-[11px] text-parchment-600 italic">Your hoard is empty</div>
-          ) : (
-            <select
-              value={neg2CardId || player.hoard[0]?.id || ''}
-              onChange={e => setNeg2CardId(e.target.value)}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-            >
-              {player.hoard.map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.type}, ${c.value})</option>
-              ))}
-            </select>
-          )}
+          <CardPickerGrid
+            label="Offer card from your hoard"
+            resourceCards={player.hoard}
+            selectedId={neg2CardId || player.hoard[0]?.id || ''}
+            onSelect={setNeg2CardId}
+            size="lg"
+            emptyText="Your hoard is empty"
+          />
           <div className="text-[11px] text-parchment-400">Trade with:</div>
-          <select
-            value={neg2Target || otherPlayers[0]?.id || ''}
-            onChange={e => setNeg2Target(e.target.value)}
-            className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-          >
+          <div className="flex flex-wrap gap-1">
             {otherPlayers.map(p => (
-              <option key={p.id} value={p.id} disabled={p.hoard.length === 0}>
-                {p.name} ({p.hoard.length} hoard card{p.hoard.length !== 1 ? 's' : ''})
-              </option>
+              <button
+                key={p.id}
+                onClick={() => setNeg2Target(p.id)}
+                disabled={p.hoard.length === 0}
+                className={`text-xs px-2 py-0.5 rounded border transition-colors disabled:opacity-40 ${
+                  (neg2Target || otherPlayers[0]?.id) === p.id
+                    ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
+                }`}
+              >
+                {p.name} ({p.hoard.length})
+              </button>
             ))}
-          </select>
+          </div>
           <div className="text-[11px] text-parchment-400">Your Rep type (Honourable Trade):</div>
-          <select
-            value={neg2RepType}
-            onChange={e => setNeg2RepType(e.target.value as RepType)}
-            className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-          >
-            {REP_TYPES_ALL.map(rt => <option key={rt} value={rt}>{rt}</option>)}
-          </select>
+          <div className="flex gap-1 flex-wrap">
+            {REP_TYPES_ALL.map(rt => (
+              <button key={rt} onClick={() => setNeg2RepType(rt)}
+                className={`text-xs px-2 py-0.5 rounded border transition-colors ${neg2RepType === rt ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+              >{rt}</button>
+            ))}
+          </div>
           <div className="text-[11px] text-blue-200">
             If accepted: both get +2 coins · You get +{player.renownCards.some(c => c.id === 'rn08') ? 2 : 1} {neg2RepType} Rep · They also get +1 {neg2RepType} Rep
           </div>
@@ -1056,18 +1053,18 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                         <div className="space-y-1">
                           <div className="text-[11px] text-parchment-400">Select up to 3 matching pairs (your hoard ↔ Flea Market):</div>
                           <div className="text-[11px] text-parchment-500">Your hoard ({rn01HoardIds.length}/3):</div>
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex gap-2 overflow-x-auto pb-1">
                             {player.hoard.map(c => (
-                              <ResourceCardMini key={c.id} card={c} size="sm"
+                              <ResourceCardMini key={c.id} card={c} size="lg"
                                 selected={rn01HoardIds.includes(c.id)}
                                 onClick={() => setRn01HoardIds(prev => prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 3 ? [...prev, c.id] : prev)}
                               />
                             ))}
                           </div>
                           <div className="text-[11px] text-parchment-500">Flea Market ({rn01FleaIdxs.length}/3):</div>
-                          <div className="flex flex-wrap gap-1">
+                          <div className="flex gap-2 overflow-x-auto pb-1">
                             {fleaOptions.map(({ c, i }) => (
-                              <ResourceCardMini key={i} card={c!} size="sm"
+                              <ResourceCardMini key={i} card={c!} size="lg"
                                 selected={rn01FleaIdxs.includes(i)}
                                 onClick={() => setRn01FleaIdxs(prev => prev.includes(i) ? prev.filter(x => x !== i) : prev.length < 3 ? [...prev, i] : prev)}
                               />
@@ -1107,14 +1104,12 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                               {op.hoard.length === 0 ? (
                                 <div className="text-[11px] text-parchment-600 italic ml-2">Hoard empty</div>
                               ) : (
-                                <select
-                                  value={rn04Discards[op.id] || ''}
-                                  onChange={e => setRn04Discards(prev => ({ ...prev, [op.id]: e.target.value }))}
-                                  className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-                                >
-                                  <option value="">— skip —</option>
-                                  {op.hoard.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type}, ${c.value})</option>)}
-                                </select>
+                                <CardPickerGrid
+                                  resourceCards={op.hoard}
+                                  selectedId={rn04Discards[op.id] || ''}
+                                  onSelect={id => setRn04Discards(prev => ({ ...prev, [op.id]: id }))}
+                                  size="lg"
+                                />
                               )}
                             </div>
                           ))}
@@ -1137,7 +1132,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                                 <div className="text-[11px] text-parchment-400">Choose 2 cards to take ({rn06Cards.length}/2):</div>
                                 <div className="flex flex-wrap gap-1">
                                   {tgt.hoard.map(c => (
-                                    <ResourceCardMini key={c.id} card={c} size="sm"
+                                    <ResourceCardMini key={c.id} card={c} size="lg"
                                       selected={rn06Cards.includes(c.id)}
                                       onClick={() => setRn06Cards(prev => prev.includes(c.id) ? prev.filter(x => x !== c.id) : prev.length < 2 ? [...prev, c.id] : prev)}
                                     />
@@ -1152,23 +1147,21 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                       {card.id === 'rn08' && (
                         <div className="space-y-1">
                           <div className="text-[11px] text-parchment-400">Give to:</div>
-                          <select value={rn08Target || otherPlayers[0]?.id || ''}
-                            onChange={e => setRn08Target(e.target.value)}
-                            className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-                          >
-                            {otherPlayers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                          </select>
-                          <div className="text-[11px] text-parchment-400">Card from your hoard:</div>
-                          {player.hoard.length === 0 ? (
-                            <div className="text-[11px] text-parchment-600 italic">Hoard empty</div>
-                          ) : (
-                            <select value={rn08Card || player.hoard[0]?.id || ''}
-                              onChange={e => setRn08Card(e.target.value)}
-                              className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
-                            >
-                              {player.hoard.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type}, ${c.value})</option>)}
-                            </select>
-                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {otherPlayers.map(p => (
+                              <button key={p.id} onClick={() => setRn08Target(p.id)}
+                                className={`text-xs px-2 py-0.5 rounded border transition-colors ${(rn08Target || otherPlayers[0]?.id) === p.id ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+                              >{p.name}</button>
+                            ))}
+                          </div>
+                          <CardPickerGrid
+                            label="Card from your hoard"
+                            resourceCards={player.hoard}
+                            selectedId={rn08Card || player.hoard[0]?.id || ''}
+                            onSelect={setRn08Card}
+                            size="lg"
+                            emptyText="Hoard empty"
+                          />
                           {(() => {
                             const chosenCard = player.hoard.find(c => c.id === (rn08Card || player.hoard[0]?.id))
                             return (
