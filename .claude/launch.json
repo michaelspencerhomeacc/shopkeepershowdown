@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "ShopkeeperShowdown-v0.3-fixes",
+      "name": "shopkeeper-showdown",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "5174", "--host"],
-      "port": 5174
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
     }
   ]
 }
