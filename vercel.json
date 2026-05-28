@@ -1,6 +1,5 @@
 {
-  "buildCommand": "npx tsc -b && npx vite build",
-  "rewrites": [
+"rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
