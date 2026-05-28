@@ -8,9 +8,11 @@ import { CardPickerGrid } from './CardPickerGrid'
 interface Props {
   player: Player
   isActiveTurn: boolean
+  /** False when viewing another player's board — hides secret information (ranger ambushes). */
+  isOwn?: boolean
 }
 
-export function ClassAbilitiesPanel({ player, isActiveTurn }: Props) {
+export function ClassAbilitiesPanel({ player, isActiveTurn, isOwn = true }: Props) {
   if (player.classId === 'barbarian') {
     return <BarbarianAbilities player={player} isActiveTurn={isActiveTurn} />
   }
@@ -21,7 +23,7 @@ export function ClassAbilitiesPanel({ player, isActiveTurn }: Props) {
     return <PaladinAbilities player={player} isActiveTurn={isActiveTurn} />
   }
   if (player.classId === 'ranger') {
-    return <RangerAbilities player={player} isActiveTurn={isActiveTurn} />
+    return <RangerAbilities player={player} isActiveTurn={isActiveTurn} isOwn={isOwn} />
   }
   return null
 }
@@ -775,6 +777,22 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
 
 const REP_TYPES_ALL: RepType[] = ['ARM', 'CON', 'TRI', 'TRG']
 
+const REP_BTN_SEL: Record<RepType, string> = {
+  ARM: 'bg-orange-700/70 border-orange-400 text-orange-100',
+  CON: 'bg-blue-700/70   border-blue-400   text-blue-100',
+  TRI: 'bg-green-700/70  border-green-400  text-green-100',
+  TRG: 'bg-pink-700/70   border-pink-400   text-pink-100',
+}
+const REP_BTN_IDLE: Record<RepType, string> = {
+  ARM: 'bg-orange-950/50 border-orange-700/40 text-orange-300 hover:border-orange-500/60',
+  CON: 'bg-blue-950/50   border-blue-700/40   text-blue-300   hover:border-blue-500/60',
+  TRI: 'bg-green-950/50  border-green-700/40  text-green-300  hover:border-green-500/60',
+  TRG: 'bg-pink-950/50   border-pink-700/40   text-pink-300   hover:border-pink-500/60',
+}
+function repBtnCls(rt: RepType, selected: boolean) {
+  return `text-xs px-2 py-0.5 rounded border transition-colors ${selected ? REP_BTN_SEL[rt] : REP_BTN_IDLE[rt]}`
+}
+
 function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTurn: boolean }) {
   const {
     players, fleaMarket, initiateRighteousDuel, talesOfOld, classAbilitiesUsedThisTurn,
@@ -835,6 +853,11 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
     if (cardId === 'rn06') { opts.rn06TargetId = rn06Target || otherPlayers[0]?.id || ''; opts.rn06CardIds = rn06Cards }
     if (cardId === 'rn08') { opts.giveTargetId = rn08Target || otherPlayers[0]?.id || ''; opts.giveCardId = rn08Card || player.hoard[0]?.id || '' }
     talesOfOld(player.id, cardId, opts)
+    if (cardId === 'rn10') {
+      // rn10 grants +1 token then we immediately spend it on a Righteous Duel
+      const tid = duelTarget || challengeableTargets[0]?.id || ''
+      if (tid) initiateRighteousDuel(player.id, tid, myStake)
+    }
     setSpendingCard(null)
     clearTalesState()
   }
@@ -917,7 +940,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
           <div className="flex gap-1 flex-wrap">
             {REP_TYPES_ALL.map(rt => (
               <button key={rt} onClick={() => setNeg2RepType(rt)}
-                className={`text-xs px-2 py-0.5 rounded border transition-colors ${neg2RepType === rt ? 'bg-gold-500/30 border-gold-400 text-gold-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+                className={repBtnCls(rt, neg2RepType === rt)}
               >{rt}</button>
             ))}
           </div>
@@ -988,14 +1011,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                       <button
                         key={rt}
                         onClick={() => setMyStake({ repType: rt, cardIds: [] })}
-                        className={`text-[11px] font-bold rounded px-2 py-0.5 border transition-colors ${
-                          myStake.repType === rt
-                            ? rt === 'ARM' ? 'bg-orange-600 border-orange-400 text-orange-100'
-                              : rt === 'CON' ? 'bg-blue-600 border-blue-400 text-blue-100'
-                              : rt === 'TRI' ? 'bg-green-600 border-green-400 text-green-100'
-                              : 'bg-pink-600 border-pink-400 text-pink-100'
-                            : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'
-                        }`}
+                        className={repBtnCls(rt, myStake.repType === rt)}
                       >
                         {rt} ×{player.rep[rt]}
                       </button>
@@ -1226,11 +1242,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                               <button
                                 key={rt}
                                 onClick={() => setRn05RepType(rt)}
-                                className={`text-[11px] px-1.5 py-0.5 rounded border transition-colors ${
-                                  rn05RepType === rt
-                                    ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'
-                                }`}
+                                className={repBtnCls(rt, rn05RepType === rt)}
                               >
                                 {rt}
                               </button>
@@ -1239,17 +1251,93 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                           <div className="text-[11px] text-green-400">Repairs all broken windows · +1 {rn05RepType} Rep</div>
                         </div>
                       )}
-                      {/* rn09, rn10, rn07: no extra picker needed */}
+                      {/* rn09, rn10, rn07: inline UI or simple description */}
                       {card.id === 'rn09' && <div className="text-[11px] text-parchment-400 italic">Takes 1 random card from each player's hoard.</div>}
-                      {card.id === 'rn10' && <div className="text-[11px] text-parchment-400 italic">Grants +1 Active token — use it for Righteous Duel.</div>}
                       {card.id === 'rn07' && <div className="text-[11px] text-parchment-400 italic">Opens Town Crier peek immediately (no action or Barracks visit needed).</div>}
+                      {/* rn10: inline duel setup — target + stake pickers */}
+                      {card.id === 'rn10' && (
+                        <div className="space-y-1.5">
+                          <div className="text-[11px] text-parchment-400 italic">Spend to immediately issue a Righteous Duel (no Active token needed).</div>
+                          {challengeableTargets.length === 0 ? (
+                            <div className="text-[11px] text-red-400 italic">No valid targets — all opponents lack a stake.</div>
+                          ) : (
+                            <>
+                              <div>
+                                <div className="text-[10px] text-parchment-400 mb-0.5">Challenge:</div>
+                                <select
+                                  value={duelTarget || challengeableTargets[0]?.id || ''}
+                                  onChange={e => setDuelTarget(e.target.value)}
+                                  className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-xs text-parchment-200 w-full"
+                                >
+                                  {challengeableTargets.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="bg-ink-900/50 border border-gold-700/40 rounded-lg p-2 space-y-1.5">
+                                <div className="text-[11px] font-semibold text-gold-300 uppercase tracking-wide">Your stake</div>
+                                {myHasRep ? (
+                                  <>
+                                    <div className="text-[11px] text-parchment-400">Choose which rep token to stake:</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {(['ARM', 'CON', 'TRI', 'TRG'] as const).filter(rt => player.rep[rt] > 0).map(rt => (
+                                        <button
+                                          key={rt}
+                                          onClick={() => setMyStake({ repType: rt, cardIds: [] })}
+                                          className={repBtnCls(rt, myStake.repType === rt)}
+                                        >
+                                          {rt} ×{player.rep[rt]}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="text-[11px] text-parchment-400">No rep — choose 2 hoard cards to stake ({myStake.cardIds.length}/2):</div>
+                                    {player.hoard.length < 2 ? (
+                                      <div className="text-[11px] text-red-400 italic">Need at least 2 hoard cards.</div>
+                                    ) : (
+                                      <div className="flex flex-wrap gap-1">
+                                        {player.hoard.map(c => {
+                                          const sel = myStake.cardIds.includes(c.id)
+                                          return (
+                                            <button
+                                              key={c.id}
+                                              onClick={() => setMyStake(s => ({
+                                                repType: null,
+                                                cardIds: sel ? s.cardIds.filter(id => id !== c.id)
+                                                  : s.cardIds.length < 2 ? [...s.cardIds, c.id] : s.cardIds,
+                                              }))}
+                                              className={`text-[8px] rounded px-1.5 py-0.5 border font-semibold transition-colors ${sel
+                                                ? 'bg-gold-600/60 border-gold-400 text-gold-100'
+                                                : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+                                            >
+                                              {c.name}
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              {totalClashBonus > 0 && (
+                                <div className="text-[10px] text-gold-400">
+                                  Your roll +{totalClashBonus} ({totalClashBonus} Renown card{totalClashBonus !== 1 ? 's' : ''} held)
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                       <div className="text-[10px] text-amber-400 font-semibold">⚠ Card permanently removed after spending.</div>
                       <button
                         onClick={() => handleTalesConfirm(card.id)}
                         disabled={
                           (card.id === 'rn01' && (rn01HoardIds.length === 0 || rn01HoardIds.length !== rn01FleaIdxs.length)) ||
                           (card.id === 'rn06' && rn06Cards.length < 2) ||
-                          (card.id === 'rn08' && player.hoard.length === 0)
+                          (card.id === 'rn08' && player.hoard.length === 0) ||
+                          (card.id === 'rn10' && (!myStakeValid || challengeableTargets.length === 0))
                         }
                         className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50"
                       >
@@ -1274,14 +1362,14 @@ const LOCATION_LABELS: Record<string, string> = {
   barracks: 'Barracks', workshop: 'Workshop', 'thieves-guild': "Thieves' Guild",
 }
 
-function RangerAbilities({ player, isActiveTurn }: { player: Player; isActiveTurn: boolean }) {
+function RangerAbilities({ player, isActiveTurn, isOwn = true }: { player: Player; isActiveTurn: boolean; isOwn?: boolean }) {
   const { placeAmbush, classAbilitiesUsedThisTurn } = useGameStore()
   const [ambushOpen, setAmbushOpen] = useState(false)
   const [selectedAmbushIds, setSelectedAmbushIds] = useState<string[]>([])
 
   const ambushUsed = classAbilitiesUsedThisTurn.includes('placeAmbush')
   const maxPlace = 3 - player.ambushesPlaced.length
-  const canPlaceAmbush = isActiveTurn && !ambushUsed && player.activeTokens >= 1 && player.ambushHand.length > 0 && maxPlace > 0
+  const canPlaceAmbush = isOwn && isActiveTurn && !ambushUsed && player.activeTokens >= 1 && player.ambushHand.length > 0 && maxPlace > 0
 
   function toggleAmbushCard(id: string) {
     setSelectedAmbushIds(prev => {
@@ -1306,7 +1394,7 @@ function RangerAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
       <div className="bg-ink-800/40 rounded-lg px-2 py-1.5">
         <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">Passive · Master of the Wilderness</div>
         <div className="text-[10px] text-parchment-500 leading-relaxed mt-0.5">
-          Free gather at turn start — draw floor(d6/2) resources.
+          Free gather at turn start — draw max(1, floor(d6/2)) resources.
         </div>
       </div>
 
@@ -1323,79 +1411,89 @@ function RangerAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
         </div>
       </div>
 
-      {/* Active ambushes on board */}
+      {/* Active ambushes on board — own view shows full details; opponent view shows count only */}
       {player.ambushesPlaced.length > 0 && (
         <div className="bg-ink-800/40 rounded-lg px-2 py-1.5 space-y-1">
-          <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">Active Ambushes ({player.ambushesPlaced.length}/3)</div>
-          <div className="flex flex-wrap gap-1.5">
-            {player.ambushesPlaced.map(c => (
-              <div key={c.id} className={`flex flex-col items-center gap-0.5 rounded border px-1 py-1 ${c.effect === 'break' ? 'bg-red-900/20 border-red-700/40' : 'bg-amber-900/20 border-amber-700/40'}`}>
-                <img src={`/cards/ambush/${c.location}.png`} alt={c.location} className="w-10 h-14 object-cover rounded" />
-                <span className={`text-[8px] font-bold ${c.effect === 'break' ? 'text-red-300' : 'text-amber-300'}`}>{c.effect === 'break' ? '💥' : '🤚'} {LOCATION_LABELS[c.location]}</span>
-              </div>
-            ))}
+          <div className="text-[10px] font-semibold text-parchment-400 uppercase tracking-wide">
+            Active Ambushes ({player.ambushesPlaced.length}/3)
           </div>
+          {isOwn ? (
+            <div className="flex flex-wrap gap-1.5">
+              {player.ambushesPlaced.map(c => (
+                <div key={c.id} className={`flex flex-col items-center gap-0.5 rounded border px-1 py-1 ${c.effect === 'break' ? 'bg-red-900/20 border-red-700/40' : 'bg-amber-900/20 border-amber-700/40'}`}>
+                  <img src={`/cards/ambush/${c.location}.png`} alt={c.location} className="w-10 h-14 object-cover rounded" />
+                  <span className={`text-[8px] font-bold ${c.effect === 'break' ? 'text-red-300' : 'text-amber-300'}`}>{c.effect === 'break' ? '💥' : '🤚'} {LOCATION_LABELS[c.location]}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[10px] text-parchment-600 italic">
+              {player.ambushesPlaced.length} ambush{player.ambushesPlaced.length !== 1 ? 'es' : ''} placed — locations hidden.
+            </div>
+          )}
         </div>
       )}
 
-      {/* Active: Place Ambush */}
-      <div>
-        <button
-          className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg border text-left transition-colors ${
-            ambushOpen ? 'bg-amber-900/30 border-amber-600/40' : 'bg-ink-800/60 border-parchment-700/30 hover:border-parchment-600/50'
-          } ${!canPlaceAmbush ? 'opacity-50 cursor-not-allowed' : ''}`}
-          onClick={() => { if (canPlaceAmbush || ambushOpen) setAmbushOpen(v => !v) }}
-          disabled={!canPlaceAmbush}
-          title={
-            !isActiveTurn ? 'Not your turn' :
-            ambushUsed ? 'Already placed this turn' :
-            player.activeTokens < 1 ? 'Need 1 token' :
-            maxPlace <= 0 ? 'Board full (3 max)' :
-            player.ambushHand.length === 0 ? 'No Ambush cards in hand' : ''
-          }
-        >
-          <span className="text-[10px] font-bold text-amber-300">Ambush — Place up to 2</span>
-          <div className="flex items-center gap-1">
-            <span className="text-[11px] text-parchment-500">{player.ambushHand.length} in hand</span>
-            <TokenCost cost={1} current={player.activeTokens} />
-          </div>
-        </button>
-        {ambushOpen && (
-          <div className="mt-1 bg-ink-800/60 border border-amber-700/30 rounded-lg p-2 space-y-2">
-            <div className="text-[10px] text-parchment-400">
-              Pick up to {Math.min(2, maxPlace)} — {selectedAmbushIds.length}/{Math.min(2, maxPlace)} selected.
+      {/* Active: Place Ambush — only shown to the ranger themselves */}
+      {isOwn && (
+        <div>
+          <button
+            className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg border text-left transition-colors ${
+              ambushOpen ? 'bg-amber-900/30 border-amber-600/40' : 'bg-ink-800/60 border-parchment-700/30 hover:border-parchment-600/50'
+            } ${!canPlaceAmbush ? 'opacity-50 cursor-not-allowed' : ''}`}
+            onClick={() => { if (canPlaceAmbush || ambushOpen) setAmbushOpen(v => !v) }}
+            disabled={!canPlaceAmbush}
+            title={
+              !isActiveTurn ? 'Not your turn' :
+              ambushUsed ? 'Already placed this turn' :
+              player.activeTokens < 1 ? 'Need 1 token' :
+              maxPlace <= 0 ? 'Board full (3 max)' :
+              player.ambushHand.length === 0 ? 'No Ambush cards in hand' : ''
+            }
+          >
+            <span className="text-[10px] font-bold text-amber-300">Ambush — Place up to 2</span>
+            <div className="flex items-center gap-1">
+              <span className="text-[11px] text-parchment-500">{player.ambushHand.length} in hand</span>
+              <TokenCost cost={1} current={player.activeTokens} />
             </div>
-            <div className="flex flex-wrap gap-2">
-              {player.ambushHand.map(card => {
-                const sel = selectedAmbushIds.includes(card.id)
-                const disabled = !sel && selectedAmbushIds.length >= Math.min(2, maxPlace)
-                return (
-                  <button
-                    key={card.id}
-                    onClick={() => !disabled && toggleAmbushCard(card.id)}
-                    disabled={disabled}
-                    className={`flex flex-col items-center gap-0.5 rounded border px-1 py-1 transition-colors disabled:opacity-40 ${
-                      sel
-                        ? card.effect === 'break' ? 'bg-red-700/40 border-red-400' : 'bg-amber-700/40 border-amber-400'
-                        : 'bg-ink-700/60 border-parchment-700/30 hover:border-parchment-500/50'
-                    }`}
-                  >
-                    <img src={`/cards/ambush/${card.location}.png`} alt={card.location} className="w-12 h-16 object-cover rounded" />
-                    <span className="text-[8px] text-parchment-300 font-semibold">{LOCATION_LABELS[card.location]}</span>
-                    <span className={`text-[8px] font-bold ${card.effect === 'break' ? 'text-red-400' : 'text-amber-400'}`}>
-                      {card.effect === 'break' ? '💥 Break' : '🤚 Steal'}
-                    </span>
-                  </button>
-                )
-              })}
+          </button>
+          {ambushOpen && (
+            <div className="mt-1 bg-ink-800/60 border border-amber-700/30 rounded-lg p-2 space-y-2">
+              <div className="text-[10px] text-parchment-400">
+                Pick up to {Math.min(2, maxPlace)} — {selectedAmbushIds.length}/{Math.min(2, maxPlace)} selected.
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {player.ambushHand.map(card => {
+                  const sel = selectedAmbushIds.includes(card.id)
+                  const disabled = !sel && selectedAmbushIds.length >= Math.min(2, maxPlace)
+                  return (
+                    <button
+                      key={card.id}
+                      onClick={() => !disabled && toggleAmbushCard(card.id)}
+                      disabled={disabled}
+                      className={`flex flex-col items-center gap-0.5 rounded border px-1 py-1 transition-colors disabled:opacity-40 ${
+                        sel
+                          ? card.effect === 'break' ? 'bg-red-700/40 border-red-400' : 'bg-amber-700/40 border-amber-400'
+                          : 'bg-ink-700/60 border-parchment-700/30 hover:border-parchment-500/50'
+                      }`}
+                    >
+                      <img src={`/cards/ambush/${card.location}.png`} alt={card.location} className="w-12 h-16 object-cover rounded" />
+                      <span className="text-[8px] text-parchment-300 font-semibold">{LOCATION_LABELS[card.location]}</span>
+                      <span className={`text-[8px] font-bold ${card.effect === 'break' ? 'text-red-400' : 'text-amber-400'}`}>
+                        {card.effect === 'break' ? '💥 Break' : '🤚 Steal'}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+              <button onClick={confirmAmbush} disabled={selectedAmbushIds.length === 0}
+                className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50">
+                Place {selectedAmbushIds.length} card{selectedAmbushIds.length !== 1 ? 's' : ''} → spend 1 token
+              </button>
             </div>
-            <button onClick={confirmAmbush} disabled={selectedAmbushIds.length === 0}
-              className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50">
-              Place {selectedAmbushIds.length} card{selectedAmbushIds.length !== 1 ? 's' : ''} → spend 1 token
-            </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Passive: Visitor Trade reminder */}
       <div className="bg-ink-800/40 rounded-lg px-2 py-1.5">

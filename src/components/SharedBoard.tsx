@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useGameStore } from '../store/gameStore'
 import type { Location, Player, GameState, DuelStake, ResourceCard } from '../types'
 import { LocationActionPanel, DrawnCardsToast } from './LocationActionPanel'
@@ -7,6 +7,7 @@ import { ResourceCardMini } from './ResourceCardMini'
 import { RecipeDisplay, ResourceCardTile } from './ResourceCardTile'
 import { CardImage } from './CardImage'
 import { parseRequirements } from '../utils/requirements'
+import { DiceRollModal } from './DiceRollModal'
 
 const DEMAND_COLORS: Record<string, string> = {
   ARM: 'bg-orange-600 text-orange-100',
@@ -15,6 +16,15 @@ const DEMAND_COLORS: Record<string, string> = {
   TRG: 'bg-pink-600 text-pink-100',
   ANY: 'bg-parchment-600 text-parchment-100',
 }
+
+/** Chip style for each resource type — used on the Thieves' Guild tile */
+const TYPE_CHIP: Record<string, string> = {
+  ARM: 'bg-orange-950/90 border-orange-400/70 text-orange-200',
+  CON: 'bg-blue-950/90 border-blue-400/70 text-blue-200',
+  TRI: 'bg-green-950/90 border-green-400/70 text-green-200',
+  TRG: 'bg-pink-950/90 border-pink-400/70 text-pink-200',
+}
+const TYPE_ICON: Record<string, string> = { ARM: '⚔️', CON: '🧪', TRI: '💎', TRG: '📦' }
 
 export const LOCATIONS: { id: Location; label: string }[] = [
   { id: 'guildhall',     label: 'Guildhall' },
@@ -30,36 +40,78 @@ function markerSrc(classId: string) {
   return `/cards/tokens/${name}.png`
 }
 
-export function SharedBoard() {
+interface SharedBoardProps {
+  /** When false (multiplayer, not your turn), location clicks and End Turn are disabled. */
+  canAct?: boolean
+  /** The local player's display name — used to gate interrupt prompts in multiplayer.
+   *  Compared against the name field in the players array so it stays correct even if
+   *  player IDs differ between clients (e.g. after an initial-state race on game start). */
+  localPlayerName?: string
+}
+
+export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps) {
   const {
     players, pawns, movePawn,
     currentTurnPlayerId, turnActionsUsed, locationsUsedThisTurn,
     bonusActionsThisTurn,
-    endTurn, sellPhaseDone, round, clashResult, dismissClash,
-    barbarianClashOptOut, resolveBarbarianClashOptOut,
+    endTurn, sellPhaseDone, round, clashResult, dismissClash, acknowledgeClash,
+    barbarianClashOptOut, submitBarbarianClashChoice, resolveBarbarianClashOptOut,
     shamanCallLightning, resolveCallLightning,
-    negotiatePending, resolveNegotiate,
+    negotiatePending, negotiateReview, counterNegotiate, resolveNegotiate,
     righteousDuelPending, resolveRighteousDuel,
     righteousDuelResult, dismissDuelResult,
     appraisePeek, completeAppraise,
     endgame, advanceFinalSell,
     adjustCoins, discardResource, placeInWindow,
     resetGame, addLog,
-    rn04RerollPending, resolveRn04Reroll,
+    rn04RerollPending, resolveRn04Reroll, rn04ForcedRoll, dismissRn04ForcedRoll,
     ambushPending, springAmbush, passAmbush,
-    trickShotPending, useTrickShot, passTrickShot,
+    trickShotPending, useTrickShot, passTrickShot, trickShotForcedRoll, dismissTrickShotForcedRoll,
     trickShotBonusPending, resolveTrickShotBonus,
     rangerVisitorTradePending, dismissRangerVisitorTrade, resolveRangerVisitorTrade,
+    nightWatcherChoicePending, assignNightWatcher,
     fleaMarket, buyFromFleaMarket, refillFleaMarket,
     resourceDeck, resourceDiscard, drawResource,
     workOrderDeck,
     townCrierPeek, completeTownCrier, activeVisitors, visitorDemandRemaining,
     professionalSlots,
+    actionLog, lastGuildFenceType,
   } = useGameStore()
+
+  /** Returns true in local/pass-and-play (no localPlayerName) or when the player whose
+   *  id is `id` has the same name as the local player.  Name-based comparison is more
+   *  robust than ID comparison because the name is a stable user-entered string. */
+  function isMe(id: string | undefined) {
+    if (!localPlayerName) return true  // pass-and-play: everyone is "me"
+    if (!id) return false
+    return players.find(p => p.id === id)?.name === localPlayerName
+  }
 
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
   const [sellPhaseOpen, setSellPhaseOpen] = useState(false)
   const [ambushBreakWinIdx, setAmbushBreakWinIdx] = useState<number | null>(null)
+  // Window-break shatter animation
+  const [shatterInfo, setShatterInfo] = useState<{ windowLines: string[]; cause: string } | null>(null)
+  const prevWindowsRef = useRef<{ id: string; windows: Player['windows'] }[]>([])
+  // Steal toast notification
+  const [stealToast, setStealToast] = useState<{
+    aggressorClassId: string; aggressorName: string
+    victimClassId: string; victimName: string
+    cardName: string; cardImageFile: string | null
+  } | null>(null)
+  const prevLogIdRef = useRef<string | null>(null)
+  // Night Watcher transfer toast
+  const [nightWatcherToast, setNightWatcherToast] = useState<{
+    recipientName: string; recipientClassId: string
+  } | null>(null)
+  const prevNWHolderIdRef = useRef<string | null>(
+    // initialise from current state so we don't fire on first render
+    players.find(p => p.hasNightWatcher)?.id ?? null
+  )
+  // Passive coin gain toast (e.g. rn06, rn09, barbarian passive)
+  const [passiveCoinToast, setPassiveCoinToast] = useState<{
+    playerName: string; playerClassId: string; amount: number; source: string
+  } | null>(null)
   // Clan toll gate: set before opening the action panel; null = no gate active
   const [clanGate, setClanGate] = useState<{ barbarianId: string; location: Location } | null>(null)
   // Clan toll is committed only when the player completes an action, not when they open the panel
@@ -71,14 +123,20 @@ export function SharedBoard() {
   const [crierSlotIdx, setCrierSlotIdx] = useState(0)
   // Empty-windows warning before ending turn
   const [showEmptyWindowsWarn, setShowEmptyWindowsWarn] = useState(false)
+  // Dice roll modal: shown after Ranger passive gather at sell phase
+  const [pendingRangerPassiveRoll, setPendingRangerPassiveRoll] = useState<number | null>(null)
+  // Bottom-left activity feed
+  const [activityFeed, setActivityFeed] = useState<Array<{ id: string; text: string }>>([])
+  const prevActivityLogRef = useRef<string | null>(null)
+  const prevTurnRef = useRef<string | null>(currentTurnPlayerId)
 
   // Hoard overflow: first player with more than 8 cards must discard before play continues
   const overflowPlayer = players.find(p => p.hoard.length > 8) ?? null
 
-  // Auto-open sell phase when the active player changes (from round 2)
+  // Auto-open sell phase when the active player changes (from round 2) — only for the acting player
   useEffect(() => {
-    if (round >= 2 && !sellPhaseDone) setSellPhaseOpen(true)
-  }, [currentTurnPlayerId])
+    if (round >= 2 && !sellPhaseDone && canAct) setSellPhaseOpen(true)
+  }, [currentTurnPlayerId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show round toast whenever the round counter advances
   useEffect(() => {
@@ -89,6 +147,170 @@ export function SharedBoard() {
     }
   }, [round])
 
+  // Shatter animation: fire when the local player's window (online) or any player's window (local) is newly broken
+  useEffect(() => {
+    const prev = prevWindowsRef.current
+    const watchedPlayers = localPlayerName
+      ? players.filter(p => p.name === localPlayerName)  // online: only local player
+      : players                                           // local: any player
+    const windowLines: string[] = []
+    watchedPlayers.forEach(p => {
+      const prevEntry = prev.find(e => e.id === p.id)
+      if (!prevEntry) return
+      p.windows.forEach((w, i) => {
+        if (w.status === 'broken' && prevEntry.windows[i]?.status !== 'broken') {
+          windowLines.push(`${p.name}'s Window ${i + 1}${w.card ? ` (${w.card.name})` : ''} shattered!`)
+        }
+      })
+    })
+    // Always snapshot current state so future renders don't re-fire
+    prevWindowsRef.current = players.map(p => ({ id: p.id, windows: p.windows }))
+
+    if (windowLines.length > 0) {
+      // The most recent log entry describes who caused the break
+      const cause = actionLog[0]?.message ?? ''
+      setShatterInfo({ windowLines, cause })
+      const t = setTimeout(() => setShatterInfo(null), 2800)
+      return () => clearTimeout(t)
+    }
+  }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Steal toast: fire when any new log entry describes a card being taken.
+  // We scan ALL entries newer than prevLogIdRef so that batched updates (e.g. steal()
+  // followed immediately by movePawn() in the same event handler) don't cause the steal
+  // entry to be pushed to actionLog[1] and missed.
+  useEffect(() => {
+    if (actionLog.length === 0) return
+    // Collect every entry added since the last render
+    const newEntries = []
+    for (const entry of actionLog) {
+      if (entry.id === prevLogIdRef.current) break
+      newEntries.push(entry)
+    }
+    if (newEntries.length === 0) return
+    prevLogIdRef.current = actionLog[0].id
+
+    for (const entry of newEntries) {
+      const msg = entry.message
+      if (msg.includes('Night Watcher blocked') || msg.includes('from the Flea Market')) continue
+      // Match "stole/took CARD from VICTIM" — covers steal(), springAmbush, rn06 Reckoning, rn09 Shadow
+      const match = msg.match(/\b(?:stole|took)\s+(.+?)\s+from\s+(.+?)(?:\s*[.!,]|\s*—|$)/i)
+      if (!match) continue
+
+      const cardName = match[1].trim()
+      const victimName = match[2].trim()
+
+      const victim = players.find(p => victimName.startsWith(p.name))
+      if (!victim) continue
+
+      const aggressor = entry.playerId ? players.find(p => p.id === entry.playerId) : null
+      const cardImageFile = aggressor?.hoard.find(c => c.name === cardName)?.imageFile ?? null
+
+      setStealToast({
+        aggressorClassId: aggressor?.classId ?? 'unknown',
+        aggressorName: aggressor?.name ?? '?',
+        victimClassId: victim.classId,
+        victimName: victim.name,
+        cardName,
+        cardImageFile,
+      })
+      const t = setTimeout(() => setStealToast(null), 4000)
+      return () => clearTimeout(t)  // only show one steal toast per batch
+    }
+  }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Night Watcher toast: fire when the token moves to a new holder
+  useEffect(() => {
+    const newHolder = players.find(p => p.hasNightWatcher)
+    const prevHolderId = prevNWHolderIdRef.current
+    prevNWHolderIdRef.current = newHolder?.id ?? null
+
+    // Only fire if the holder actually changed to someone new
+    if (!newHolder) return
+    if (newHolder.id === prevHolderId) return
+
+    setNightWatcherToast({ recipientName: newHolder.name, recipientClassId: newHolder.classId })
+    const t = setTimeout(() => setNightWatcherToast(null), 4000)
+    return () => clearTimeout(t)
+  }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Passive coin toast: fire when a passive ability grants coins (rn06, rn09, Fearsome Champion, etc.)
+  useEffect(() => {
+    if (actionLog.length === 0) return
+    const latest = actionLog[0]
+    if (latest.id === prevLogIdRef.current) return  // already seen
+    const msg = latest.message
+    // Detect known passive coin gain patterns
+    const passivePatterns = [
+      { re: /Reckoning at Duskreach.*gained (\d+) coin/i,       source: 'Reckoning at Duskreach' },
+      { re: /Shadow of Vel'sha.*gained (\d+) coin/i,            source: "Shadow of Vel'sha" },
+      { re: /Fearsome Champion.*gained (\d+) coin/i,             source: 'Fearsome Champion' },
+      { re: /Merchant of Saltholm.*\+(\d+) coins/i,              source: 'Merchant of Saltholm' },
+    ]
+    for (const { re, source } of passivePatterns) {
+      const m = msg.match(re)
+      if (!m) continue
+      const amount = parseInt(m[1], 10)
+      const recipient = latest.playerId ? players.find(p => p.id === latest.playerId) : null
+      if (!recipient) continue
+      setPassiveCoinToast({ playerName: recipient.name, playerClassId: recipient.classId, amount, source })
+      const t = setTimeout(() => setPassiveCoinToast(null), 3500)
+      return () => clearTimeout(t)
+    }
+  }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Activity feed helper — push a notification that auto-dismisses after 3.8 s
+  function pushActivity(text: string) {
+    const id = `${Date.now()}-${Math.random()}`
+    setActivityFeed(prev => [{ id, text }, ...prev].slice(0, 5))
+    setTimeout(() => setActivityFeed(prev => prev.filter(n => n.id !== id)), 3800)
+  }
+
+  // Turn-change notification
+  useEffect(() => {
+    if (!currentTurnPlayerId || currentTurnPlayerId === prevTurnRef.current) return
+    prevTurnRef.current = currentTurnPlayerId
+    const player = players.find(p => p.id === currentTurnPlayerId)
+    if (player) pushActivity(`✨ ${player.name}'s turn`)
+  }, [currentTurnPlayerId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Action log → activity feed
+  useEffect(() => {
+    const latest = actionLog[0]
+    if (!latest || latest.id === prevActivityLogRef.current) return
+    prevActivityLogRef.current = latest.id
+    const msg = latest.message
+    // Skip entries that already have dedicated toasts/overlays or are too noisy
+    if (
+      /\bstole\b/i.test(msg)           ||  // steal toast handles this
+      msg.includes('Night Watcher')     ||  // NW toast handles this
+      msg.includes('Start-of-game')     ||
+      msg.startsWith('---')             ||  // "--- Round N begins ---"
+      msg.includes('moved to ')         ||  // pawn movement — too noisy
+      msg.includes('rolled a ')         ||  // bare dice roll — dice modal handles
+      msg.includes('peeked top ')       ||  // town crier internal
+      msg.includes('from the Flea Market') || // flea buys are minor
+      msg.includes(' in window ')       ||  // card placed into window slot
+      msg.includes(' into window ')     ||  // swapped into window slot
+      msg.includes(' to hoard.')            // card moved back to hoard
+    ) return
+
+    // Enrich message with a contextual emoji prefix
+    let display = msg
+    if (/drew \d+ /.test(msg))          display = `🎴 ${msg}`
+    else if (/gained \d+ .{3} rep/.test(msg)) display = `⭐ ${msg}`
+    else if (/completed Work Order/.test(msg)) display = `📦 ${msg}`
+    else if (/hired|Bodyguard/.test(msg))  display = `🛡️ ${msg}`
+    else if (/broke|shattered|break/.test(msg)) display = `💥 ${msg}`
+    else if (/Clash|clash/.test(msg))    display = `⚔️ ${msg}`
+    else if (/paid \d+ coins|toll/.test(msg)) display = `💰 ${msg}`
+    else if (/Ambush|ambush/.test(msg))  display = `🏹 ${msg}`
+    else if (/gathered|Gathered/.test(msg)) display = `🌿 ${msg}`
+    else if (/sold|earned \d+ coins/.test(msg)) display = `🪙 ${msg}`
+
+    pushActivity(display.length > 100 ? display.slice(0, 98) + '…' : display)
+  }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const currentPlayer = players.find(p => p.id === currentTurnPlayerId) ?? players[0]
   const maxActions = 3 + bonusActionsThisTurn
   const actionsLeft = Math.max(0, maxActions - turnActionsUsed)
@@ -98,12 +320,9 @@ export function SharedBoard() {
     return players.findIndex(p => p.id === playerId)
   }
 
-  function togglePawn(playerId: string, loc: Location) {
-    const here = pawns.some(pw => pw.playerId === playerId && pw.location === loc)
-    movePawn(playerId, here ? null : loc)
-  }
 
   function handleLocationClick(locId: Location) {
+    if (!canAct) return
     if (locationsUsedThisTurn.includes(locId)) return
     if (turnOver) return
     const clanOwner = players.find(
@@ -116,9 +335,141 @@ export function SharedBoard() {
     setSelectedLocation(prev => prev === locId ? null : locId)
   }
 
+  const localPlayerId = localPlayerName
+    ? players.find(p => p.name === localPlayerName)?.id ?? null
+    : null
+
   return (
     <>
-      <DrawnCardsToast />
+      <DrawnCardsToast localPlayerId={localPlayerId} />
+
+      {/* Window-break shatter overlay */}
+      {shatterInfo && (
+        <div className="fixed inset-0 z-[600] pointer-events-none shatter-overlay flex flex-col items-center justify-center px-6">
+          <div className="bg-black/75 rounded-2xl border border-red-900/60 px-8 py-5 text-center space-y-2 shadow-2xl">
+            {shatterInfo.windowLines.map((line, i) => (
+              <div key={i} className="text-xl font-display font-bold text-amber-200">
+                💥 {line}
+              </div>
+            ))}
+            {shatterInfo.cause && (
+              <div className="text-sm text-parchment-200 font-semibold max-w-xs mx-auto leading-snug">
+                {shatterInfo.cause}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Top-centre notification stack — steal toast + Night Watcher toast + passive coin toast */}
+      {(stealToast || nightWatcherToast || passiveCoinToast) && (
+        <div className="fixed top-8 left-0 right-0 flex flex-col items-center gap-3 z-[590] pointer-events-none">
+
+          {/* Steal toast */}
+          {stealToast && (() => {
+            const CLASS_BG: Record<string, string> = {
+              barbarian: 'bg-red-950 border-red-400',
+              monk:      'bg-amber-950 border-amber-400',
+              paladin:   'bg-blue-950 border-blue-400',
+              ranger:    'bg-green-950 border-green-400',
+              rogue:     'bg-purple-950 border-purple-400',
+              shaman:    'bg-teal-950 border-teal-400',
+              sorcerer:  'bg-violet-950 border-violet-400',
+              warlock:   'bg-indigo-950 border-indigo-400',
+            }
+            return (
+            <div className={`steal-toast ${CLASS_BG[stealToast.aggressorClassId] ?? 'bg-ink-950 border-amber-500'} border-2 rounded-2xl px-10 py-6 shadow-2xl shadow-black/60 flex items-center gap-6`}>
+              {/* Aggressor */}
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-28 h-28 rounded-full overflow-hidden border-2 border-red-500/80 shadow-lg shadow-red-900/50">
+                  <img src={markerSrc(stealToast.aggressorClassId)} alt={stealToast.aggressorName} className="w-full h-full object-cover" />
+                </div>
+                <span className="text-sm text-parchment-300 max-w-[100px] truncate font-semibold">{stealToast.aggressorName}</span>
+              </div>
+              {/* Stolen card */}
+              <div className="flex flex-col items-center gap-2">
+                <div className="text-white font-display font-bold text-xl leading-none">stole</div>
+                <div className="relative">
+                  {stealToast.cardImageFile ? (
+                    <div className="w-20 h-[112px] rounded-md overflow-hidden border-2 border-amber-500/60 shadow-lg">
+                      <img src={stealToast.cardImageFile} alt={stealToast.cardName} className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="w-20 h-[112px] rounded-md bg-ink-800 border-2 border-amber-500/40 flex items-center justify-center">
+                      <span className="text-xs text-parchment-400 text-center px-2 leading-tight">{stealToast.cardName}</span>
+                    </div>
+                  )}
+                  {/* Animated steal hand swooping onto the card */}
+                  <div className="steal-hand absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <span className="text-5xl drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] select-none">🤚</span>
+                  </div>
+                </div>
+                <span className="text-sm text-parchment-100 font-semibold max-w-[88px] truncate">{stealToast.cardName}</span>
+              </div>
+              {/* Victim */}
+              <div className="flex flex-col items-center gap-2">
+                <div className="text-parchment-500 text-base">from</div>
+                <div className="w-28 h-28 rounded-full overflow-hidden border-2 border-parchment-600/60 shadow-lg opacity-80">
+                  <img src={markerSrc(stealToast.victimClassId)} alt={stealToast.victimName} className="w-full h-full object-cover" />
+                </div>
+                <span className="text-sm text-parchment-300 max-w-[100px] truncate">{stealToast.victimName}</span>
+              </div>
+            </div>
+            )
+          })()}
+
+          {/* Night Watcher transfer toast */}
+          {nightWatcherToast && (
+            <div className="steal-toast bg-violet-950 border-2 border-violet-400 rounded-2xl px-8 py-5 shadow-2xl shadow-violet-500/50 flex items-center gap-5">
+              {/* Token image */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="relative flex-shrink-0">
+                  <div className="absolute inset-0 rounded-full animate-ping bg-violet-400/30" />
+                  <div className="relative w-20 h-20 rounded-full overflow-hidden border-2 border-violet-400 shadow-lg shadow-violet-900/60 bg-ink-900">
+                    <img src="/cards/tokens/The Night Watcher.png" alt="Night Watcher" className="w-full h-full object-cover" />
+                  </div>
+                </div>
+              </div>
+              {/* Message */}
+              <div className="flex flex-col gap-1">
+                <div className="text-violet-300 font-display font-bold text-xl leading-tight">
+                  🌙 Night Watcher
+                </div>
+                <div className="text-parchment-100 text-base font-semibold">
+                  {nightWatcherToast.recipientName} is now protected
+                </div>
+                <div className="text-parchment-400 text-xs leading-snug">
+                  Their next steal or break is blocked
+                </div>
+              </div>
+              {/* Recipient avatar */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-violet-500/70 shadow-lg">
+                  <img src={markerSrc(nightWatcherToast.recipientClassId)} alt={nightWatcherToast.recipientName} className="w-full h-full object-cover" />
+                </div>
+                <span className="text-xs text-parchment-300 max-w-[80px] truncate font-semibold">{nightWatcherToast.recipientName}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Passive coin gain toast */}
+          {passiveCoinToast && (
+            <div className="steal-toast bg-amber-950 border-2 border-amber-400 rounded-2xl px-6 py-4 shadow-2xl shadow-amber-900/50 flex items-center gap-4">
+              <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-amber-400/70 shadow-lg flex-shrink-0">
+                <img src={markerSrc(passiveCoinToast.playerClassId)} alt={passiveCoinToast.playerName} className="w-full h-full object-cover" />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <div className="text-amber-300 font-display font-bold text-lg leading-tight">
+                  💰 +{passiveCoinToast.amount} coin{passiveCoinToast.amount !== 1 ? 's' : ''}
+                </div>
+                <div className="text-parchment-100 text-sm font-semibold">{passiveCoinToast.playerName}</div>
+                <div className="text-parchment-400 text-xs leading-snug">{passiveCoinToast.source}</div>
+              </div>
+            </div>
+          )}
+
+        </div>
+      )}
 
       {/* Round transition toast */}
       {roundToast !== null && (
@@ -131,24 +482,43 @@ export function SharedBoard() {
         </div>
       )}
 
-      {/* Sell phase modal — auto-opens at start of each turn from round 2 */}
-      {sellPhaseOpen && round >= 2 && !sellPhaseDone && (
-        <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center bg-black/50">
-          <div className="bg-ink-900 border-2 border-gold-500/40 rounded-t-2xl sm:rounded-2xl p-4 shadow-2xl w-full max-w-lg mx-0 sm:mx-4 max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-display font-bold text-gold-300 text-sm">
-                Sell Phase — {currentPlayer?.name}
-              </h3>
-              <button
-                onClick={() => setSellPhaseOpen(false)}
-                className="text-parchment-500 hover:text-parchment-200 text-lg leading-none"
-              >
-                ×
-              </button>
+      {/* Sell phase modal — only for the acting player */}
+      {round >= 2 && !sellPhaseDone && (
+        canAct ? (
+          sellPhaseOpen && (
+            <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center bg-black/50">
+              <div className="bg-ink-900 border-2 border-gold-500/40 rounded-t-2xl sm:rounded-2xl p-4 shadow-2xl w-full max-w-lg mx-0 sm:mx-4 max-h-[80vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-display font-bold text-gold-300 text-sm">
+                    Sell Phase — {currentPlayer?.name}
+                  </h3>
+                  <button
+                    onClick={() => setSellPhaseOpen(false)}
+                    className="text-parchment-500 hover:text-parchment-200 text-lg leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+                <SellPhase onDone={() => {
+                  useGameStore.getState().completeSellPhase()
+                  setSellPhaseOpen(false)
+                  const st = useGameStore.getState()
+                  const ranger = st.players.find(p => p.id === st.currentTurnPlayerId)
+                  if (ranger?.classId === 'ranger' && !st.endgame && st.diceResult !== null) {
+                    setPendingRangerPassiveRoll(st.diceResult)
+                  }
+                }} />
+              </div>
             </div>
-            <SellPhase onDone={() => { useGameStore.getState().completeSellPhase(); setSellPhaseOpen(false) }} />
+          )
+        ) : (
+          /* Opponents see a non-blocking status pill instead of the full modal */
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[250] pointer-events-none">
+            <div className="bg-ink-900/90 border border-amber-600/50 text-amber-300 text-xs font-semibold px-4 py-2 rounded-full shadow-lg">
+              ⏳ {currentPlayer?.name} is completing their Sell Phase…
+            </div>
           </div>
-        </div>
+        )
       )}
 
       {/* Turn banner */}
@@ -176,7 +546,7 @@ export function SharedBoard() {
               {actionsLeft} action{actionsLeft !== 1 ? 's' : ''} left
             </span>
           </div>
-          {round >= 2 && !sellPhaseDone && (
+          {round >= 2 && !sellPhaseDone && canAct && (
             <button
               onClick={() => setSellPhaseOpen(true)}
               className="text-[10px] bg-amber-900/40 border border-amber-600/40 text-amber-300 px-2 py-0.5 rounded font-semibold hover:bg-amber-800/50 transition-colors"
@@ -185,15 +555,22 @@ export function SharedBoard() {
             </button>
           )}
         </div>
-        <button
-          onClick={() => {
-            const emptyNormal = currentPlayer?.windows.some(w => w.status === 'normal' && !w.card) ?? false
-            if (emptyNormal) { setShowEmptyWindowsWarn(true) } else { setSelectedLocation(null); endTurn() }
-          }}
-          className="btn-primary text-xs px-3 py-1.5 font-semibold"
-        >
-          End Turn →
-        </button>
+        {canAct && (
+          <button
+            onClick={() => {
+              const emptyNormal = currentPlayer?.windows.some(w => w.status === 'normal' && !w.card) ?? false
+              if (emptyNormal) { setShowEmptyWindowsWarn(true) } else { setSelectedLocation(null); endTurn() }
+            }}
+            className="btn-primary text-xs px-3 py-1.5 font-semibold"
+          >
+            End Turn →
+          </button>
+        )}
+        {!canAct && (
+          <div className="text-xs text-parchment-600 italic px-3 py-1.5">
+            {players.find(p => p.id === currentTurnPlayerId)?.name ?? '...'}'s turn
+          </div>
+        )}
       </div>
 
       <div className="flex gap-2 items-stretch">
@@ -247,7 +624,6 @@ export function SharedBoard() {
           <div className="absolute inset-0 grid grid-cols-3 grid-rows-2">
             {LOCATIONS.map(loc => {
               const pawnsHere = pawns.filter(pw => pw.location === loc.id)
-              const absent    = players.filter(p => !pawns.some(pw => pw.playerId === p.id && pw.location === loc.id))
               const isSelected = selectedLocation === loc.id
               const isUsed = locationsUsedThisTurn.includes(loc.id)
               const clanOwner = players.find(p => p.classId === 'barbarian' && p.clanLocation === loc.id)
@@ -275,45 +651,44 @@ export function SharedBoard() {
                     </div>
                   </div>
 
-                  {/* Clan marker */}
-                  {clanOwner && (
-                    <div className="absolute top-7 left-1 z-10" title={`${clanOwner.name}'s Clan — costs 2 coins to use`}>
-                      <img src="/cards/tokens/Clan.png" alt="Clan marker" className="w-7 h-7 rounded-full border-2 border-red-500/80 shadow-lg" />
+                  {/* Thieves' Guild — last fenced type badge */}
+                  {loc.id === 'thieves-guild' && lastGuildFenceType && (
+                    <div className="absolute top-7 right-1.5 z-10 pointer-events-none">
+                      <div className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold border shadow ${TYPE_CHIP[lastGuildFenceType]}`}>
+                        <span>{TYPE_ICON[lastGuildFenceType]}</span>
+                        <span>{lastGuildFenceType}</span>
+                      </div>
                     </div>
                   )}
 
-                  {/* Placed pawns — top right */}
-                  <div className="absolute top-6 right-1 flex flex-col gap-0.5 items-end">
+                  {/* Clan marker */}
+                  {clanOwner && (
+                    <div className="absolute top-7 left-1.5 z-10" title={`${clanOwner.name}'s Clan — costs 2 coins to use`}>
+                      <div className="relative">
+                        <div className="absolute inset-0 rounded-full animate-ping bg-red-500/30" />
+                        <div className="relative flex items-center gap-1 bg-red-950/90 border-2 border-red-500 rounded-full pl-0.5 pr-2 py-0.5 shadow-lg shadow-red-900/60">
+                          <img src="/cards/tokens/Clan.png" alt="Clan marker" className="w-6 h-6 rounded-full border border-red-400/60" />
+                          <span className="text-[10px] font-bold text-red-300 whitespace-nowrap">Clan</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Placed pawns — stacked bottom-right, larger and more visible */}
+                  <div className="absolute bottom-2 right-1.5 flex flex-col gap-1 items-end">
                     {pawnsHere.map(pw => {
                       const player = players.find(p => p.id === pw.playerId)
                       if (!player) return null
                       return (
-                        <button
+                        <div
                           key={pw.playerId}
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); movePawn(pw.playerId, null) }}
-                          className="w-8 h-8 rounded-full overflow-hidden border-2 border-white/70 shadow-lg hover:scale-110 active:scale-95 transition-transform"
-                          title={`${player.name} — click to remove from ${loc.label}`}
+                          className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/90 shadow-xl shadow-black/70 ring-2 ring-gold-400/60"
+                          title={`${player.name} is here`}
                         >
                           <img src={markerSrc(player.classId)} alt={player.name} className="w-full h-full object-cover" />
-                        </button>
+                        </div>
                       )
                     })}
-                  </div>
-
-                  {/* Ghost pawns — click to place */}
-                  <div className="absolute top-6 right-10 flex flex-col gap-0.5 items-end">
-                    {absent.map(player => (
-                      <button
-                        key={player.id}
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); togglePawn(player.id, loc.id) }}
-                        className="w-5 h-5 rounded-full overflow-hidden border border-white/40 shadow opacity-50 hover:opacity-90 hover:scale-105 active:scale-95 transition-all"
-                        title={`Move ${player.name} to ${loc.label}`}
-                      >
-                        <img src={markerSrc(player.classId)} alt={player.name} className="w-full h-full object-cover" />
-                      </button>
-                    ))}
                   </div>
                 </button>
               )
@@ -503,71 +878,12 @@ export function SharedBoard() {
 
       {/* Clash result overlay */}
       {clashResult && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
-          <div className="bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
-            <div className="text-center mb-3">
-              <div className="text-lg font-display font-bold text-red-400">⚔ Clash!</div>
-              <div className="text-xs text-parchment-500 capitalize">{clashResult.location}</div>
-            </div>
-
-            {/* Dice rolls */}
-            <div className="flex justify-center gap-3 mb-4 flex-wrap">
-              {clashResult.rolls.map(r => {
-                const player = players.find(p => p.id === r.playerId)
-                const isWinner = r.playerId === clashResult.winnerId
-                return (
-                  <div
-                    key={r.playerId}
-                    className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg border ${
-                      isWinner
-                        ? 'bg-gold-500/20 border-gold-400 text-gold-200'
-                        : 'bg-ink-800 border-parchment-700/30 text-parchment-400'
-                    }`}
-                  >
-                    <img
-                      src={markerSrc(player?.classId ?? '')}
-                      alt={player?.name}
-                      className="w-8 h-8 rounded-full border border-white/30 object-cover"
-                    />
-                    <div className="text-xs font-semibold">{player?.name.split(' ')[0]}</div>
-                    <div className="text-2xl font-bold font-display">{r.roll}</div>
-                    {isWinner && <div className="text-[10px] text-gold-400 font-semibold">WINNER</div>}
-                  </div>
-                )
-              })}
-            </div>
-
-            {/* Outcome */}
-            <div className="text-center text-sm mb-4">
-              {clashResult.winnerId === null ? (
-                <span className="text-parchment-400">Tie — no effect.</span>
-              ) : clashResult.spoils.length === 0 ? (
-                <span className="text-parchment-300">
-                  {players.find(p => p.id === clashResult.winnerId)?.name} wins — refreshed 1 active token.
-                  Losers had empty hoards.
-                </span>
-              ) : (
-                <div className="space-y-1">
-                  <div className="text-gold-300 font-semibold text-xs">
-                    {players.find(p => p.id === clashResult.winnerId)?.name} wins + refreshes 1 active
-                  </div>
-                  {clashResult.spoils.map((s, i) => (
-                    <div key={i} className="text-xs text-parchment-400">
-                      Took <span className="text-parchment-200 font-semibold">{s.cardName}</span> from {s.fromName}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <button
-              onClick={dismissClash}
-              className="btn-primary w-full text-sm py-2 font-semibold"
-            >
-              Continue →
-            </button>
-          </div>
-        </div>
+        <ClashRollOffOverlay
+          result={clashResult}
+          players={players}
+          localPlayerId={localPlayerId}
+          onAcknowledge={acknowledgeClash}
+        />
       )}
 
       {/* Clan toll gate — shown before the action panel opens */}
@@ -593,177 +909,272 @@ export function SharedBoard() {
         <BarbarianClashOptOutOverlay
           optOut={barbarianClashOptOut}
           players={players}
-          onResolve={resolveBarbarianClashOptOut}
+          localPlayerId={localPlayerId}
+          onSubmitChoice={submitBarbarianClashChoice}
         />
       )}
 
       {/* Shaman Call Lightning — target player chooses 2 hoard cards to discard */}
       {shamanCallLightning && (
-        <ShamanCallLightningModal
-          shamanCallLightning={shamanCallLightning}
-          players={players}
-          onResolve={(discardIds) => resolveCallLightning(shamanCallLightning.shamanId, discardIds)}
-        />
+        isMe(shamanCallLightning.targetId)
+          ? <ShamanCallLightningModal
+              shamanCallLightning={shamanCallLightning}
+              players={players}
+              onResolve={(discardIds) => resolveCallLightning(shamanCallLightning.shamanId, discardIds)}
+            />
+          : <WaitingOverlay name={players.find(p => p.id === shamanCallLightning.targetId)?.name} action="responding to Call Lightning" />
       )}
 
-      {/* Guildhall Negotiate — target responds */}
+      {/* Guildhall Negotiate — step 1: target chooses counter-card */}
       {negotiatePending && (
-        <NegotiateModal
-          pending={negotiatePending}
-          players={players}
-          onAccept={(counterCardId) => resolveNegotiate(true, counterCardId)}
-          onDecline={() => resolveNegotiate(false)}
-        />
+        isMe(negotiatePending.targetId)
+          ? <NegotiateModal
+              pending={negotiatePending}
+              players={players}
+              onCounter={counterNegotiate}
+              onDecline={() => resolveNegotiate(false)}
+            />
+          : <WaitingOverlay name={players.find(p => p.id === negotiatePending.targetId)?.name} action="choosing their counter-offer" />
       )}
 
-      {/* Last Stand at Greyveil (rn04) — reroll offer after a dice roll */}
-      {rn04RerollPending && (
+      {/* Guildhall Negotiate — step 2: proposer reviews and accepts/declines */}
+      {negotiateReview && (
+        isMe(negotiateReview.proposerId)
+          ? <NegotiateReviewModal
+              review={negotiateReview}
+              players={players}
+              onAccept={() => resolveNegotiate(true)}
+              onDecline={() => resolveNegotiate(false)}
+            />
+          : <WaitingOverlay name={players.find(p => p.id === negotiateReview.proposerId)?.name} action="reviewing the counter-offer" />
+      )}
+
+      {/* Last Stand at Greyveil (rn04) — reroll offer, only shown to the affected player */}
+      {rn04RerollPending && isMe(rn04RerollPending.playerId) && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
           <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
-            <div className="text-base font-display font-bold text-amber-300">⚔ Last Stand at Greyveil</div>
-            <div className="text-xs text-parchment-400">
+            <div className="text-lg font-display font-bold text-amber-300">⚔ Last Stand at Greyveil</div>
+            <div className="text-sm text-parchment-400">
               {players.find(p => p.id === rn04RerollPending.playerId)?.name} rolled a{' '}
               <span className="text-2xl align-middle">{'⚀⚁⚂⚃⚄⚅'[rn04RerollPending.originalRoll - 1]}</span>
               <span className="text-parchment-200 font-bold ml-1">({rn04RerollPending.originalRoll})</span>
             </div>
-            <div className="text-[10px] text-parchment-500">Use your once-per-round reroll?</div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => resolveRn04Reroll(true)}
-                className="btn-primary flex-1 text-xs px-2 py-1.5"
-              >
-                🎲 Reroll
-              </button>
-              <button
-                onClick={() => resolveRn04Reroll(false)}
-                className="btn-secondary flex-1 text-xs px-2 py-1.5"
-              >
-                Keep {rn04RerollPending.originalRoll}
-              </button>
-            </div>
+            {isMe(rn04RerollPending.playerId) ? (
+              <>
+                <div className="text-sm text-parchment-500">Use your once-per-round reroll?</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => resolveRn04Reroll(true)}
+                    className="btn-primary flex-1 text-sm px-2 py-1.5"
+                  >🎲 Reroll</button>
+                  <button onClick={() => resolveRn04Reroll(false)} className="btn-secondary flex-1 text-sm px-2 py-1.5">Keep {rn04RerollPending.originalRoll}</button>
+                </div>
+              </>
+            ) : (
+              <WaitingBadge name={players.find(p => p.id === rn04RerollPending.playerId)?.name} action="deciding on reroll" />
+            )}
           </div>
         </div>
       )}
 
-      {/* Ranger — Ambush spring prompt */}
-      {ambushPending && (() => {
+      {/* Ranger — Ambush spring prompt (only shown to Ranger and targeted player) */}
+      {ambushPending && (isMe(ambushPending.rangerId) || isMe(ambushPending.targetPlayerId)) && (() => {
         const target = players.find(p => p.id === ambushPending.targetPlayerId)
         const isBreak = ambushPending.card.effect === 'break'
         const breakableWindows = target?.windows.map((w, i) => ({ w, i })).filter(x => x.w.status === 'normal') ?? []
         const canSpring = !isBreak || ambushBreakWinIdx !== null
+        const rangerName = players.find(p => p.id === ambushPending.rangerId)?.name
         return (
           <div className="fixed inset-0 z-[340] flex items-center justify-center bg-black/60">
             <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
-              <div className="text-base font-display font-bold text-amber-300">🏹 Ambush Triggered!</div>
-              <div className="text-xs text-parchment-300">
+              <div className="text-lg font-display font-bold text-amber-300">🏹 Ambush Triggered!</div>
+              <div className="text-sm text-parchment-300">
                 {target?.name} visited{' '}
                 <span className="font-bold text-parchment-100">{LOCATIONS.find(l => l.id === ambushPending.location)?.label}</span>
-                {' '}— where you placed a{' '}
+                {' '}— where <span className="font-bold text-amber-200">{rangerName}</span> placed a{' '}
                 <span className={`font-bold ${isBreak ? 'text-red-300' : 'text-amber-300'}`}>
                   {isBreak ? '💥 Break' : '🤚 Steal'}
                 </span>{' '}Ambush.
               </div>
 
-              {isBreak && breakableWindows.length > 0 && (
-                <div className="space-y-1.5">
-                  <div className="text-[10px] text-parchment-400">Choose which window to break:</div>
-                  <div className="flex gap-2 justify-center flex-wrap">
-                    {breakableWindows.map(({ w, i }) => (
-                      <button
-                        key={w.id}
-                        onClick={() => setAmbushBreakWinIdx(i)}
-                        className={`text-xs px-3 py-1 rounded border transition-colors ${
-                          ambushBreakWinIdx === i
-                            ? 'bg-red-700/50 border-red-400 text-red-200'
-                            : 'bg-ink-700 border-parchment-700/30 text-parchment-300 hover:border-red-500/50'
-                        }`}
-                      >
-                        Window {i + 1}{w.card ? ` (${w.card.name})` : ' (empty)'}
-                      </button>
-                    ))}
+              {isMe(ambushPending.rangerId) ? (
+                <>
+                  {isBreak && breakableWindows.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="text-sm text-parchment-400">Choose which window to break:</div>
+                      <div className="flex gap-2 justify-center flex-wrap">
+                        {breakableWindows.map(({ w, i }) => (
+                          <button
+                            key={w.id}
+                            onClick={() => setAmbushBreakWinIdx(i)}
+                            className={`text-sm px-3 py-1 rounded border transition-colors ${
+                              ambushBreakWinIdx === i
+                                ? 'bg-red-700/50 border-red-400 text-red-200'
+                                : 'bg-ink-700 border-parchment-700/30 text-parchment-300 hover:border-red-500/50'
+                            }`}
+                          >
+                            Window {i + 1}{w.card ? ` (${w.card.name})` : ' (empty)'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {isBreak && breakableWindows.length === 0 && (
+                    <div className="text-sm text-parchment-500 italic">No breakable windows — springing has no effect.</div>
+                  )}
+                  <div className="text-sm text-parchment-500">Spring the Ambush now?</div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { springAmbush(ambushBreakWinIdx ?? undefined); setAmbushBreakWinIdx(null) }}
+                      disabled={!canSpring}
+                      className="btn-primary flex-1 text-sm px-2 py-1.5 disabled:opacity-50"
+                    >
+                      ✓ Spring it!
+                    </button>
+                    <button onClick={() => { passAmbush(); setAmbushBreakWinIdx(null) }} className="btn-secondary flex-1 text-sm px-2 py-1.5">
+                      Let it pass
+                    </button>
                   </div>
-                </div>
+                </>
+              ) : (
+                <WaitingBadge name={rangerName} action="deciding on ambush" />
               )}
-              {isBreak && breakableWindows.length === 0 && (
-                <div className="text-[10px] text-parchment-500 italic">No breakable windows — springing has no effect.</div>
-              )}
-
-              <div className="text-[10px] text-parchment-500">Spring the Ambush now?</div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { springAmbush(ambushBreakWinIdx ?? undefined); setAmbushBreakWinIdx(null) }}
-                  disabled={!canSpring}
-                  className="btn-primary flex-1 text-xs px-2 py-1.5 disabled:opacity-50"
-                >
-                  ✓ Spring it!
-                </button>
-                <button onClick={() => { passAmbush(); setAmbushBreakWinIdx(null) }} className="btn-secondary flex-1 text-xs px-2 py-1.5">
-                  Let it pass
-                </button>
-              </div>
             </div>
           </div>
         )
       })()}
 
-      {/* Ranger — Trick Shot prompt */}
-      {trickShotPending && (
+      {/* Night Watcher choice — attacker picks which victim receives the token */}
+      {nightWatcherChoicePending && (() => {
+        const candidates = nightWatcherChoicePending.candidateIds
+          .map(id => players.find(p => p.id === id))
+          .filter(Boolean) as typeof players
+        return (
+          <div className="fixed inset-0 z-[345] flex items-center justify-center bg-black/60">
+            <div className="bg-ink-900 border-2 border-violet-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+              <div className="text-lg font-display font-bold text-violet-300">🌙 Night Watcher</div>
+              <div className="text-sm text-parchment-300">
+                Multiple players were affected. Choose who receives the Night Watcher token.
+              </div>
+              {isMe(nightWatcherChoicePending.attackerId) ? (
+                <div className="flex flex-col gap-2">
+                  {candidates.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => assignNightWatcher(p.id)}
+                      className="btn-secondary text-sm px-3 py-1.5 w-full"
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <WaitingBadge
+                  name={players.find(p => p.id === nightWatcherChoicePending.attackerId)?.name}
+                  action="choosing Night Watcher recipient"
+                />
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Ranger — Trick Shot prompt (only shown to Ranger and targeted player) */}
+      {trickShotPending && (isMe(trickShotPending.rangerId) || isMe(trickShotPending.targetPlayerId)) && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
           <div className="bg-ink-900 border-2 border-green-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
-            <div className="text-base font-display font-bold text-green-300">⚡ Trick Shot</div>
-            <div className="text-xs text-parchment-300">
+            <div className="text-lg font-display font-bold text-green-300">⚡ Trick Shot</div>
+            <div className="text-sm text-parchment-300">
               {players.find(p => p.id === trickShotPending.targetPlayerId)?.name} rolled{' '}
               <span className="text-2xl align-middle">{'⚀⚁⚂⚃⚄⚅'[trickShotPending.originalRoll - 1]}</span>
               <span className="text-parchment-200 font-bold ml-1">({trickShotPending.originalRoll})</span>
               {' '}for {trickShotPending.rollType}.
             </div>
-            <div className="text-[10px] text-parchment-500">
-              Force a re-roll? Higher = token refunded. Equal/lower = you get Break or Launder.
-            </div>
-            <div className="flex gap-2">
-              <button onClick={useTrickShot} className="btn-primary flex-1 text-xs px-2 py-1.5">
-                🎲 Force re-roll
-              </button>
-              <button onClick={passTrickShot} className="btn-secondary flex-1 text-xs px-2 py-1.5">
-                Skip
-              </button>
-            </div>
+            {isMe(trickShotPending.rangerId) ? (
+              <>
+                <div className="text-sm text-parchment-500">
+                  Force a re-roll? Higher = token refunded. Equal/lower = you get Break or Launder.
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => useTrickShot()}
+                    className="btn-primary flex-1 text-sm px-2 py-1.5"
+                  >🎲 Force re-roll</button>
+                  <button onClick={passTrickShot} className="btn-secondary flex-1 text-sm px-2 py-1.5">Skip</button>
+                </div>
+              </>
+            ) : (
+              <WaitingBadge name={players.find(p => p.id === trickShotPending.rangerId)?.name} action="deciding on Trick Shot" />
+            )}
           </div>
         </div>
+      )}
+
+      {/* rn04 reroll result — only shown to the player who used Last Stand */}
+      {rn04ForcedRoll !== null && isMe(rn04ForcedRoll.playerId) && (
+        <DiceRollModal
+          result={rn04ForcedRoll.roll}
+          title="Last Stand at Greyveil — Reroll"
+          onDismiss={dismissRn04ForcedRoll}
+        />
+      )}
+
+      {/* Trick Shot result — only shown to the Ranger and the targeted player */}
+      {trickShotForcedRoll !== null && (isMe(trickShotForcedRoll.rangerId) || isMe(trickShotForcedRoll.targetPlayerId)) && (
+        <DiceRollModal
+          result={trickShotForcedRoll.roll}
+          title="Trick Shot Re-roll"
+          onDismiss={dismissTrickShotForcedRoll}
+        />
+      )}
+
+      {/* Ranger passive — free gather roll shown after sell phase */}
+      {pendingRangerPassiveRoll !== null && (
+        <DiceRollModal
+          result={pendingRangerPassiveRoll}
+          title="Master of the Wilderness"
+          subtitle="Free gather from the Ranger passive"
+          onDismiss={() => setPendingRangerPassiveRoll(null)}
+        />
       )}
 
       {/* Ranger — Trick Shot bonus (equal/lower result) */}
       {trickShotBonusPending && (() => {
         const ranger = players.find(p => p.id === trickShotBonusPending.rangerId)
-        const breakTargets = players.filter(p => p.id !== trickShotBonusPending.targetPlayerId)
-        return (
-          <TrickShotBonusModal
-            ranger={ranger}
-            breakTargets={breakTargets}
-            onLaunder={() => resolveTrickShotBonus('launder')}
-            onBreak={(windowId) => resolveTrickShotBonus('break', windowId)}
-          />
-        )
+        const breakTargets = players.filter(p => p.id !== trickShotBonusPending.targetPlayerId && p.id !== trickShotBonusPending.rangerId)
+        return isMe(trickShotBonusPending.rangerId)
+          ? <TrickShotBonusModal
+              ranger={ranger}
+              breakTargets={breakTargets}
+              onLaunder={() => resolveTrickShotBonus('launder')}
+              onBreak={(windowId) => resolveTrickShotBonus('break', windowId)}
+            />
+          : <WaitingOverlay name={ranger?.name} action="choosing Trick Shot bonus" />
       })()}
 
       {/* Ranger — Visitor Trade passive */}
       {rangerVisitorTradePending && (() => {
         const ranger = players.find(p => p.id === rangerVisitorTradePending.rangerId)
         if (!ranger) return null
-        return (
-          <RangerVisitorTradeModal
-            ranger={ranger}
-            fleaMarket={fleaMarket}
-            onTrade={(cardId, fleaIdx) => resolveRangerVisitorTrade(cardId, fleaIdx)}
-            onSkip={dismissRangerVisitorTrade}
-          />
-        )
+        const { tradesRemaining } = rangerVisitorTradePending
+        return isMe(rangerVisitorTradePending.rangerId)
+          ? <RangerVisitorTradeModal
+              ranger={ranger}
+              fleaMarket={fleaMarket}
+              tradesRemaining={tradesRemaining}
+              onTrade={(cardId, fleaIdx) => resolveRangerVisitorTrade(cardId, fleaIdx)}
+              onSkip={dismissRangerVisitorTrade}
+            />
+          : <WaitingOverlay name={ranger.name} action={`choosing Visitor Trade (${tradesRemaining} remaining)`} />
       })()}
 
       {/* Town Crier picker — shown whenever townCrierPeek is active (Barracks action OR rn07 Paladin card) */}
       {townCrierPeek && (() => {
         const crierPlayer = players.find(p => p.id === townCrierPeek.playerId)
         if (!crierPlayer) return null
+        if (!isMe(townCrierPeek.playerId)) {
+          return <WaitingOverlay name={crierPlayer.name} action="placing a Town Crier visitor" />
+        }
         return (
           <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
             <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-2xl w-full mx-4 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -881,12 +1292,14 @@ export function SharedBoard() {
 
       {/* Paladin Righteous Duel — target sees challenger's stake, chooses own, accepts or declines */}
       {righteousDuelPending && (
-        <RighteousDuelChallengeModal
-          pending={righteousDuelPending}
-          players={players}
-          onAccept={(tStake) => resolveRighteousDuel(true, tStake)}
-          onDecline={(cardId) => resolveRighteousDuel(false, undefined, cardId)}
-        />
+        isMe(righteousDuelPending.targetId)
+          ? <RighteousDuelChallengeModal
+              pending={righteousDuelPending}
+              players={players}
+              onAccept={(tStake) => resolveRighteousDuel(true, tStake)}
+              onDecline={(cardId) => resolveRighteousDuel(false, undefined, cardId)}
+            />
+          : <WaitingOverlay name={players.find(p => p.id === righteousDuelPending.targetId)?.name} action="responding to Righteous Duel" />
       )}
 
       {/* Paladin Righteous Duel result */}
@@ -900,8 +1313,8 @@ export function SharedBoard() {
         />
       )}
 
-      {/* Hoard overflow — blocks play until player discards/places cards */}
-      {overflowPlayer && (
+      {/* Hoard overflow — only shown to the player who is over the limit */}
+      {overflowPlayer && isMe(overflowPlayer.id) && (
         <HoardOverflowModal
           player={overflowPlayer}
           onDiscard={(cardId) => discardResource(overflowPlayer.id, cardId, 'hoard')}
@@ -910,7 +1323,7 @@ export function SharedBoard() {
       )}
 
       {/* Final sell phase */}
-      {endgame?.phase === 'final-sell' && (
+      {endgame?.phase === 'final-sell' && canAct && (
         <div className="fixed inset-0 z-[350] flex items-end sm:items-center justify-center bg-black/70">
           <div className="bg-ink-900 border-2 border-gold-500/50 rounded-t-2xl sm:rounded-2xl p-4 shadow-2xl w-full max-w-lg mx-0 sm:mx-4 max-h-[80vh] overflow-y-auto">
             <div className="text-center mb-3">
@@ -1027,10 +1440,240 @@ export function SharedBoard() {
           </div>
         )
       })()}
+
+      {/* Bottom-left activity feed */}
+      {activityFeed.length > 0 && (
+        <div className="fixed bottom-4 left-4 z-[480] pointer-events-none flex flex-col gap-1.5 max-w-[300px]">
+          {activityFeed.map(n => (
+            <div key={n.id} className="activity-item bg-ink-900/95 border border-parchment-700/40 rounded-lg px-3 py-2 shadow-lg text-sm text-parchment-200 leading-snug">
+              {n.text}
+            </div>
+          ))}
+        </div>
+      )}
     </>
   )
 }
 
+
+// ---- Clash Roll-Off Overlay ----
+
+const CLASH_ANIM_STYLE = (
+  <style>{`
+    @keyframes dice-tumble {
+      0%   { transform: rotate(-10deg) scale(0.93); }
+      20%  { transform: rotate(7deg)   scale(1.07); }
+      40%  { transform: rotate(-6deg)  scale(0.96); }
+      60%  { transform: rotate(8deg)   scale(1.04); }
+      80%  { transform: rotate(-4deg)  scale(0.98); }
+      100% { transform: rotate(9deg)   scale(1.05); }
+    }
+    @keyframes dice-land {
+      0%   { transform: scale(1.35) rotate(-5deg); opacity: 0.8; }
+      55%  { transform: scale(0.90) rotate(1.5deg); opacity: 1; }
+      78%  { transform: scale(1.08) rotate(-0.5deg); }
+      100% { transform: scale(1)    rotate(0deg); }
+    }
+    @keyframes dice-modal-in {
+      from { transform: scale(0.85) translateY(12px); opacity: 0; }
+      to   { transform: scale(1)    translateY(0);    opacity: 1; }
+    }
+    @keyframes dice-result-in {
+      from { transform: translateY(6px); opacity: 0; }
+      to   { transform: translateY(0);   opacity: 1; }
+    }
+    .dice-tumbling { animation: dice-tumble 0.16s linear infinite; }
+    .dice-landing  { animation: dice-land 0.38s cubic-bezier(.22,.68,0,1.3) forwards; }
+    .dice-modal-in { animation: dice-modal-in 0.22s ease-out both; }
+    .dice-result-in { animation: dice-result-in 0.25s ease-out 0.06s both; }
+  `}</style>
+)
+
+const FACES_CLASH = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+
+function ClashRollOffOverlay({
+  result,
+  players,
+  localPlayerId,
+  onAcknowledge,
+}: {
+  result: NonNullable<GameState['clashResult']>
+  players: Player[]
+  /** null = pass-and-play (single dismiss button) */
+  localPlayerId: string | null
+  onAcknowledge: (playerId: string | null) => void
+}) {
+  const rollValues = result.rolls.map(r => r.roll)
+  const [phase, setPhase] = useState<'rolling' | 'landing' | 'settled'>('rolling')
+  const [displayed, setDisplayed] = useState<number[]>(() =>
+    result.rolls.map(() => Math.ceil(Math.random() * 6))
+  )
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    let frame = 0
+    const TOTAL_FRAMES = 18
+
+    function tick() {
+      frame++
+      if (frame >= TOTAL_FRAMES) {
+        setDisplayed(rollValues)
+        setPhase('landing')
+        timerRef.current = setTimeout(() => setPhase('settled'), 400)
+        return
+      }
+      setDisplayed(rollValues.map(rv => {
+        const pool = frame >= TOTAL_FRAMES - 2
+          ? [rv]
+          : [1, 2, 3, 4, 5, 6].filter(v => v !== rv)
+        return pool[Math.floor(Math.random() * pool.length)]
+      }))
+      const t = 45 + Math.pow(frame / TOTAL_FRAMES, 2.2) * 140
+      timerRef.current = setTimeout(tick, t)
+    }
+
+    timerRef.current = setTimeout(tick, 45)
+    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+      {CLASH_ANIM_STYLE}
+      <div className="dice-modal-in bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
+        <div className="text-center mb-3">
+          <div className="text-xl font-display font-bold text-red-400">⚔ Clash!</div>
+          <div className="text-sm text-parchment-500 capitalize">{result.location}</div>
+        </div>
+
+        {/* Animated dice */}
+        <div className="flex justify-center gap-3 mb-4 flex-wrap">
+          {result.rolls.map((r, i) => {
+            const player = players.find(p => p.id === r.playerId)
+            const isWinner = r.playerId === result.winnerId
+            return (
+              <div
+                key={r.playerId}
+                className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg border ${
+                  isWinner && phase === 'settled'
+                    ? 'bg-gold-500/20 border-gold-400 text-gold-200'
+                    : 'bg-ink-800 border-parchment-700/30 text-parchment-400'
+                }`}
+              >
+                <img
+                  src={markerSrc(player?.classId ?? '')}
+                  alt={player?.name}
+                  className="w-7 h-7 rounded-full border border-white/30 object-cover"
+                />
+                <div className="text-sm font-semibold">{player?.name.split(' ')[0]}</div>
+                <div
+                  className={`text-[64px] leading-none select-none ${
+                    phase === 'rolling' ? 'dice-tumbling' :
+                    phase === 'landing' ? 'dice-landing'  : ''
+                  }`}
+                >
+                  {FACES_CLASH[(displayed[i] ?? 1) - 1]}
+                </div>
+                {phase === 'settled' && (
+                  <div className="dice-result-in text-2xl font-bold font-display">{r.roll}</div>
+                )}
+                {phase !== 'settled' && (
+                  <div style={{ height: '2rem' }} />
+                )}
+                {phase === 'settled' && isWinner && (
+                  <div className="text-xs text-gold-400 font-semibold">WINNER</div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Outcome + Continue — only after settled */}
+        {phase === 'settled' && (
+          <>
+            <div className="dice-result-in text-center text-base mb-4">
+              {result.winnerId === null ? (
+                <span className="text-parchment-400">Tie — no effect.</span>
+              ) : result.spoils.length === 0 ? (
+                <span className="text-parchment-300">
+                  {players.find(p => p.id === result.winnerId)?.name} wins — refreshed 1 active token.
+                  Losers had empty hoards.
+                </span>
+              ) : (
+                <div className="space-y-1">
+                  <div className="text-gold-300 font-semibold text-sm">
+                    {players.find(p => p.id === result.winnerId)?.name} wins + refreshes 1 active
+                  </div>
+                  {result.spoils.map((s, i) => (
+                    <div key={i} className="text-sm text-parchment-400">
+                      Took <span className="text-parchment-200 font-semibold">{s.cardName}</span> from {s.fromName}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Per-player acknowledgement — each participant must confirm before turn advances */}
+            {localPlayerId === null ? (
+              /* Pass-and-play: single dismiss button */
+              <button
+                onClick={() => onAcknowledge(null)}
+                className="btn-primary w-full text-sm py-2 font-semibold"
+              >
+                Continue →
+              </button>
+            ) : result.rolls.every(r => result.acknowledgedBy.includes(r.playerId)) ? (
+              /* All acknowledged — should auto-dismiss, but keep a fallback */
+              <div className="text-center text-sm text-parchment-400 italic">Resolving…</div>
+            ) : result.acknowledgedBy.includes(localPlayerId) ? (
+              /* Local player has acknowledged, waiting for others */
+              <div className="space-y-2">
+                <div className="text-center text-sm text-parchment-500 italic">Waiting for others…</div>
+                <div className="flex justify-center gap-2 flex-wrap">
+                  {result.rolls.map(r => {
+                    const p = players.find(pl => pl.id === r.playerId)
+                    const done = result.acknowledgedBy.includes(r.playerId)
+                    return (
+                      <div key={r.playerId} className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+                        done ? 'border-green-500/60 text-green-400 bg-green-900/20' : 'border-parchment-700/40 text-parchment-500'
+                      }`}>
+                        {done ? '✓' : '⏳'} {p?.name.split(' ')[0]}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              /* Local player hasn't acknowledged yet */
+              <div className="space-y-2">
+                <button
+                  onClick={() => onAcknowledge(localPlayerId)}
+                  className="btn-primary w-full text-sm py-2 font-semibold"
+                >
+                  Continue →
+                </button>
+                {result.rolls.length > 1 && (
+                  <div className="flex justify-center gap-2 flex-wrap">
+                    {result.rolls.map(r => {
+                      const p = players.find(pl => pl.id === r.playerId)
+                      const done = result.acknowledgedBy.includes(r.playerId)
+                      return (
+                        <div key={r.playerId} className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+                          done ? 'border-green-500/60 text-green-400 bg-green-900/20' : 'border-parchment-700/40 text-parchment-500'
+                        }`}>
+                          {done ? '✓' : '⏳'} {p?.name.split(' ')[0]}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 // ---- Barbarian Clash Opt-Out Overlay ----
 
@@ -1039,106 +1682,171 @@ type OptOutState = NonNullable<GameState['barbarianClashOptOut']>
 function BarbarianClashOptOutOverlay({
   optOut,
   players,
-  onResolve,
+  localPlayerId,
+  onSubmitChoice,
 }: {
   optOut: OptOutState
   players: Player[]
-  onResolve: (choices: Record<string, string[]>) => void
+  localPlayerId: string | null
+  onSubmitChoice: (playerId: string, cardIds: string[]) => void
 }) {
-  // cardChoices[playerId] = array of chosen card IDs (empty = fighting, 2 = paying)
-  const [cardChoices, setCardChoices] = useState<Record<string, string[]>>({})
-  // Which player's hoard card picker is expanded
+  // Local pending card selections before submission (not synced — just for the picker UI)
+  const [pendingCards, setPendingCards] = useState<Record<string, string[]>>({})
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const barb = players.find(p => p.id === optOut.barbarianId)
   const loc = LOCATIONS.find(l => l.id === optOut.location)
 
+  // Pass-and-play: localPlayerId is null, all players interact on this screen
+  const isPassAndPlay = localPlayerId === null
+  const iAmBarbarian = !isPassAndPlay && localPlayerId === optOut.barbarianId
+
+  // choices in the store = what's been officially submitted (syncs to all clients)
+  const choices = optOut.choices
+  const hasDecided = (id: string) => id in choices
+  const isFighting = (id: string) => hasDecided(id) && (choices[id]?.length ?? 0) === 0
+  const isPaying  = (id: string) => hasDecided(id) && (choices[id]?.length ?? 0) >= 2
+
+  const decidedCount = optOut.otherPlayerIds.filter(hasDecided).length
+  const totalCount   = optOut.otherPlayerIds.length
+
   function toggleCard(playerId: string, cardId: string) {
-    setCardChoices(prev => {
+    setPendingCards(prev => {
       const current = prev[playerId] ?? []
-      if (current.includes(cardId)) {
-        return { ...prev, [playerId]: current.filter(id => id !== cardId) }
-      }
-      if (current.length >= 2) return prev // already at max
+      if (current.includes(cardId)) return { ...prev, [playerId]: current.filter(id => id !== cardId) }
+      if (current.length >= 2) return prev
       return { ...prev, [playerId]: [...current, cardId] }
     })
   }
 
-  function cancelPay(playerId: string) {
-    setCardChoices(prev => { const n = { ...prev }; delete n[playerId]; return n })
+  function submitFight(playerId: string) {
+    onSubmitChoice(playerId, [])
+    setPendingCards(prev => { const n = { ...prev }; delete n[playerId]; return n })
     setExpanded(null)
   }
 
-  const anyPaying = optOut.otherPlayerIds.some(id => (cardChoices[id]?.length ?? 0) === 2)
-  // Disable submit if any player has started picking but hasn't chosen 2 yet
-  const hasPartial = optOut.otherPlayerIds.some(id => {
-    const n = cardChoices[id]?.length ?? 0
-    return n > 0 && n < 2
-  })
+  function submitPay(playerId: string) {
+    const cards = pendingCards[playerId] ?? []
+    if (cards.length < 2) return
+    onSubmitChoice(playerId, cards)
+    setPendingCards(prev => { const n = { ...prev }; delete n[playerId]; return n })
+    setExpanded(null)
+  }
+
+  function cancelPick(playerId: string) {
+    setPendingCards(prev => { const n = { ...prev }; delete n[playerId]; return n })
+    setExpanded(null)
+  }
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
       <div className="bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 max-h-[85vh] overflow-y-auto">
+        {/* Header */}
         <div className="text-center mb-4">
-          <div className="text-lg font-display font-bold text-red-400">⚔ Clash incoming!</div>
-          <div className="text-xs text-parchment-500 capitalize mt-0.5">{loc?.label}</div>
-          <div className="text-xs text-amber-300 mt-2 font-semibold">
+          <div className="text-xl font-display font-bold text-red-400">⚔ Clash incoming!</div>
+          <div className="text-sm text-parchment-500 capitalize mt-0.5">{loc?.label}</div>
+          <div className="text-sm text-amber-300 mt-2 font-semibold">
             {barb?.name} is here (+2 to their roll).
           </div>
-          <div className="text-[10px] text-parchment-400 mt-1">
+          <div className="text-sm text-parchment-400 mt-1">
             Other players may pay 2 resources to make {barb?.name} retreat.
             Payers sit out — {barb?.name} retreats and keeps the resources.
           </div>
         </div>
 
+        {/* Barbarian waiting message (multiplayer: shown to barbarian instead of buttons) */}
+        {iAmBarbarian && (
+          <div className="text-center text-parchment-400 text-sm py-2 mb-3 bg-ink-800 rounded-lg border border-parchment-700/30">
+            Waiting for others to decide… ({decidedCount}/{totalCount})
+          </div>
+        )}
+
+        {/* Player rows — shows live status from store; interactive for local player(s) */}
         <div className="space-y-2 mb-4">
           {optOut.otherPlayerIds.map(id => {
             const player = players.find(p => p.id === id)
             if (!player) return null
-            const chosen = cardChoices[id] ?? []
-            const isPaying = chosen.length === 2
-            const isPicking = chosen.length > 0 && !isPaying
+
+            const decided   = hasDecided(id)
+            const fighting  = isFighting(id)
+            const paying    = isPaying(id)
+            const pending   = pendingCards[id] ?? []
+            const isPicking = pending.length > 0 && !decided
+            const isExpandedPicker = expanded === id
+            // Show interactive controls if pass-and-play OR this is my row in multiplayer
+            const canInteract = isPassAndPlay || id === localPlayerId
             const canPay = player.hoard.length >= 2
-            const isExpanded = expanded === id
 
             return (
               <div key={id} className="rounded-lg border border-parchment-700/30 overflow-hidden">
                 {/* Player row */}
                 <div className={`flex items-center justify-between px-3 py-2 ${
-                  isPaying ? 'bg-amber-900/40' : 'bg-ink-800'
+                  paying ? 'bg-amber-900/40' : fighting ? 'bg-red-900/20' : 'bg-ink-800'
                 }`}>
-                  <span className="text-xs font-semibold text-parchment-200">{player.name}</span>
+                  <span className="text-sm font-semibold text-parchment-200">{player.name}</span>
                   <div className="flex items-center gap-2">
-                    {isPaying ? (
-                      <button
-                        onClick={() => cancelPay(id)}
-                        className="text-[10px] text-amber-300 hover:text-red-300"
-                      >
-                        ✓ Paying 2 — cancel
-                      </button>
-                    ) : isPicking ? (
-                      <span className="text-[10px] text-parchment-400">{chosen.length}/2 selected</span>
-                    ) : canPay ? (
-                      <button
-                        onClick={() => { setExpanded(isExpanded ? null : id); if (!cardChoices[id]) setCardChoices(p => ({ ...p, [id]: [] })) }}
-                        className="text-[10px] bg-amber-900/60 hover:bg-amber-800/60 border border-amber-700/40 text-amber-300 rounded px-2 py-0.5"
-                      >
-                        Pay 2 resources
-                      </button>
+                    {decided ? (
+                      // Already submitted — show result to everyone
+                      fighting ? (
+                        <span className="text-xs text-red-300 font-semibold">⚔ Fighting!</span>
+                      ) : (
+                        <span className="text-xs text-amber-300 font-semibold">✓ Paying 2</span>
+                      )
+                    ) : canInteract ? (
+                      // Show interaction buttons
+                      isPicking ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-parchment-400">{pending.length}/2 selected</span>
+                          {pending.length === 2 && (
+                            <button
+                              onClick={() => submitPay(id)}
+                              className="text-xs bg-amber-700 hover:bg-amber-600 text-amber-100 rounded px-2 py-0.5 font-semibold"
+                            >
+                              Confirm Pay
+                            </button>
+                          )}
+                          <button
+                            onClick={() => cancelPick(id)}
+                            className="text-xs text-parchment-500 hover:text-parchment-300"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => submitFight(id)}
+                            className="text-xs bg-red-900/60 hover:bg-red-800/60 border border-red-700/40 text-red-300 rounded px-2 py-0.5 font-semibold"
+                          >
+                            ⚔ I'll fight!
+                          </button>
+                          {canPay ? (
+                            <button
+                              onClick={() => setExpanded(isExpandedPicker ? null : id)}
+                              className="text-xs bg-amber-900/60 hover:bg-amber-800/60 border border-amber-700/40 text-amber-300 rounded px-2 py-0.5"
+                            >
+                              Pay 2 resources
+                            </button>
+                          ) : (
+                            <span className="text-xs text-parchment-600">Can't pay ({player.hoard.length})</span>
+                          )}
+                        </div>
+                      )
                     ) : (
-                      <span className="text-[10px] text-parchment-600">Not enough ({player.hoard.length})</span>
+                      // Another player's row in multiplayer — show waiting
+                      <span className="text-xs text-parchment-600 italic">deciding…</span>
                     )}
                   </div>
                 </div>
 
-                {/* Card picker — shown when expanded or picking */}
-                {(isExpanded || isPicking) && !isPaying && (
+                {/* Card picker */}
+                {canInteract && !decided && isExpandedPicker && (
                   <div className="bg-ink-900/60 px-3 py-2 border-t border-parchment-800/30">
-                    <div className="text-[10px] text-parchment-400 mb-1.5">
+                    <div className="text-xs text-parchment-400 mb-1.5">
                       Choose 2 resources from {player.name}'s hoard:
                     </div>
                     {player.hoard.length === 0 ? (
-                      <div className="text-[10px] text-parchment-600 italic">Hoard is empty</div>
+                      <div className="text-xs text-parchment-600 italic">Hoard is empty</div>
                     ) : (
                       <div className="flex flex-wrap gap-1.5">
                         {player.hoard.map(card => (
@@ -1146,26 +1854,26 @@ function BarbarianClashOptOutOverlay({
                             key={card.id}
                             card={card}
                             size="sm"
-                            selected={chosen.includes(card.id)}
+                            selected={pending.includes(card.id)}
                             onClick={() => toggleCard(id, card.id)}
                           />
                         ))}
                       </div>
                     )}
                     <button
-                      onClick={() => { cancelPay(id); setExpanded(null) }}
-                      className="text-[10px] text-parchment-500 hover:text-parchment-300 mt-1.5"
+                      onClick={() => cancelPick(id)}
+                      className="text-xs text-parchment-500 hover:text-parchment-300 mt-1.5"
                     >
                       Cancel
                     </button>
                   </div>
                 )}
 
-                {/* Confirm what they're paying */}
-                {isPaying && (
+                {/* What a paying player chose */}
+                {paying && (
                   <div className="bg-amber-900/20 px-3 py-1 border-t border-amber-800/30">
-                    <div className="text-[10px] text-amber-400">
-                      Will pay: {chosen.map(cid => player.hoard.find(c => c.id === cid)?.name ?? cid).join(', ')}
+                    <div className="text-xs text-amber-400">
+                      Paying: {(choices[id] ?? []).map(cid => player.hoard.find(c => c.id === cid)?.name ?? cid).join(', ')}
                     </div>
                   </div>
                 )}
@@ -1174,24 +1882,13 @@ function BarbarianClashOptOutOverlay({
           })}
         </div>
 
-        <button
-          onClick={() => {
-            const finalChoices: Record<string, string[]> = {}
-            for (const id of optOut.otherPlayerIds) {
-              if ((cardChoices[id]?.length ?? 0) === 2) finalChoices[id] = cardChoices[id]
-            }
-            onResolve(finalChoices)
-          }}
-          disabled={hasPartial}
-          className="btn-primary w-full text-sm py-2 font-semibold disabled:opacity-50"
-        >
-          {anyPaying ? 'Pay & Retreat Barbarian →' : 'Proceed to Clash →'}
-        </button>
-        {hasPartial && (
-          <div className="text-[10px] text-amber-400 text-center mt-1">
-            Finish selecting 2 resources or cancel the payment first
-          </div>
-        )}
+        {/* Footer status — shown to everyone, no button needed (auto-resolves) */}
+        <div className="text-xs text-center text-parchment-500">
+          {decidedCount < totalCount
+            ? `Waiting for ${totalCount - decidedCount} of ${totalCount} player${totalCount !== 1 ? 's' : ''} to decide…`
+            : 'All decided — resolving…'
+          }
+        </div>
       </div>
     </div>
   )
@@ -1224,17 +1921,17 @@ function ClanTollModal({
       <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4">
         <div className="text-center mb-4">
           <img src="/cards/tokens/Clan.png" alt="Clan" className="w-12 h-12 rounded-full border-2 border-amber-500/60 mx-auto mb-2 shadow-lg" />
-          <div className="text-base font-display font-bold text-amber-300">Clan Territory!</div>
-          <div className="text-xs text-parchment-400 mt-2">
+          <div className="text-lg font-display font-bold text-amber-300">Clan Territory!</div>
+          <div className="text-sm text-parchment-400 mt-2">
             <span className="text-parchment-200 font-semibold">{barb?.name}'s</span> Clan marker is at{' '}
             <span className="text-parchment-200 font-semibold">{loc?.label}</span>.
           </div>
-          <div className="text-[10px] text-parchment-500 mt-2 leading-relaxed">
+          <div className="text-sm text-parchment-500 mt-2 leading-relaxed">
             You must pay <span className="text-parchment-200 font-semibold">{barb?.name} 2 coins</span> to use
             this location. The toll is charged when you take an action — you can still back out for free.
           </div>
           {!canAfford && (
-            <div className="text-[10px] text-red-400 mt-1.5 font-semibold">
+            <div className="text-sm text-red-400 mt-1.5 font-semibold">
               ⚠ You only have {currentPlayer?.coins ?? 0} coins!
             </div>
           )}
@@ -1276,137 +1973,186 @@ function HoardOverflowModal({
   const [placingCardId, setPlacingCardId] = useState<string | null>(null)
   const [showWorkOrder, setShowWorkOrder] = useState(false)
   const over = player.hoard.length - 8
-  const availableWindows = player.windows
-    .map((w, i) => ({ ...w, i }))
-    .filter(w => !w.card && w.status !== 'shuttered')
+
+  const WINDOW_TYPE_BG: Record<string, string> = {
+    ARM: 'bg-orange-800/80 border-orange-500/60',
+    CON: 'bg-blue-800/80 border-blue-500/60',
+    TRI: 'bg-green-800/80 border-green-500/60',
+    TRG: 'bg-pink-800/80 border-pink-500/60',
+  }
 
   return (
     <div className="fixed inset-0 z-[450] flex items-center justify-center bg-black/70">
-      <div className="bg-ink-900 border-2 border-red-500/60 rounded-xl p-4 shadow-2xl w-full max-w-sm mx-4 max-h-[85vh] overflow-y-auto">
-        <div className="text-center mb-3">
-          <div className="text-base font-display font-bold text-red-400">⚠ Hoard Overflow</div>
-          <div className="text-sm font-semibold text-parchment-200 mt-0.5">{player.name}</div>
-          <div className="text-xs text-parchment-400 mt-1">
-            {player.hoard.length}/8 cards — discard {over} to continue.
+      <div className="bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="text-center mb-4">
+          <div className="text-lg font-display font-bold text-red-400">⚠ Hoard Overflow — {player.name}</div>
+          <div className="text-base text-parchment-300 mt-0.5">
+            {player.hoard.length}/8 cards — discard {over} more to continue.
           </div>
-          {availableWindows.length > 0 && (
-            <div className="text-[10px] text-parchment-500 mt-0.5">
-              You can also place cards into empty windows.
-            </div>
-          )}
         </div>
 
         {/* Work Order reference */}
         {player.workOrder && (
-          <div className="mb-3">
+          <div className="mb-4">
             <button
               onClick={() => setShowWorkOrder(v => !v)}
-              className="w-full flex items-center justify-between px-2 py-1.5 bg-amber-950/40 border border-amber-700/30 rounded-lg text-[10px] text-amber-300 font-semibold hover:bg-amber-900/40 transition-colors"
+              className="w-full flex items-center justify-between px-3 py-2 bg-amber-950/40 border border-amber-700/30 rounded-lg text-sm text-amber-300 font-semibold hover:bg-amber-900/40 transition-colors"
             >
               <span>📋 Work Order: {player.workOrder.name}</span>
               <span>{showWorkOrder ? '▲' : '▼'}</span>
             </button>
             {showWorkOrder && (
-              <div className="px-2 py-1.5 bg-amber-950/20 border-x border-b border-amber-700/30 rounded-b-lg space-y-0.5">
-                <div className="text-[10px] text-parchment-400">Recipe: <RecipeDisplay recipe={player.workOrder.recipe} /></div>
-                <div className="text-[10px] text-gold-400 font-semibold">Reward: ${player.workOrder.price}</div>
+              <div className="px-3 py-2 bg-amber-950/20 border-x border-b border-amber-700/30 rounded-b-lg space-y-0.5">
+                <div className="text-sm text-parchment-400">Recipe: <RecipeDisplay recipe={player.workOrder.recipe} /></div>
+                <div className="text-sm text-gold-400 font-semibold">Reward: ${player.workOrder.price}</div>
               </div>
             )}
           </div>
         )}
 
-        {/* Window picker — shown when a card is selected for window placement */}
-        {placingCardId && (
-          <div className="mb-3 bg-ink-800/60 rounded-lg p-2 border border-gold-500/30">
-            <div className="text-[10px] text-gold-400 mb-1.5 font-semibold">
-              Placing {player.hoard.find(c => c.id === placingCardId)?.name} — choose a window:
+        {/* Windows section */}
+        <div className="mb-5">
+          <div className="text-sm font-semibold text-parchment-400 uppercase tracking-wide mb-2">Shop Windows</div>
+          <div className="flex gap-2 flex-wrap">
+            {player.windows.map((w, i) => {
+              const isTarget = placingCardId !== null && !w.card && w.status !== 'shuttered' && w.status !== 'broken'
+              const isEmpty = !w.card && w.status !== 'shuttered' && w.status !== 'broken'
+              return (
+                <button
+                  key={i}
+                  disabled={w.status === 'broken' || w.status === 'shuttered' || (!isTarget && !!w.card)}
+                  onClick={() => {
+                    if (placingCardId && isEmpty) {
+                      onPlaceInWindow(placingCardId, i)
+                      setPlacingCardId(null)
+                    }
+                  }}
+                  style={{ width: 80, height: 110 }}
+                  className={`rounded-lg border-2 flex flex-col items-center justify-center gap-1 text-center transition-all text-sm font-semibold ${
+                    w.status === 'broken'
+                      ? 'bg-red-900/60 border-red-600/60 text-red-300 cursor-not-allowed'
+                      : w.status === 'shuttered'
+                      ? 'bg-gray-800/60 border-gray-600/40 text-gray-400 cursor-not-allowed'
+                      : w.card
+                      ? `${WINDOW_TYPE_BG[w.card.type] ?? 'bg-ink-700 border-parchment-600/40'} text-parchment-100 cursor-default`
+                      : isTarget
+                      ? 'bg-gold-500/20 border-gold-400 text-gold-300 cursor-pointer hover:bg-gold-500/30 animate-pulse'
+                      : 'bg-ink-800/60 border-parchment-700/30 border-dashed text-parchment-600 cursor-not-allowed'
+                  }`}
+                >
+                  {w.status === 'broken' ? (
+                    <>
+                      <span className="text-lg">💥</span>
+                      <span className="text-xs">Broken</span>
+                    </>
+                  ) : w.status === 'shuttered' ? (
+                    <>
+                      <span className="text-lg">🔒</span>
+                      <span className="text-xs">Shuttered</span>
+                    </>
+                  ) : w.card ? (
+                    <>
+                      <span className="text-xs font-bold uppercase">{w.card.type}</span>
+                      <span className="text-xs leading-tight px-1">{w.card.name}</span>
+                    </>
+                  ) : isTarget ? (
+                    <span className="text-xs leading-tight px-1">Place here →</span>
+                  ) : (
+                    <span className="text-xs text-parchment-600">Empty</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          {placingCardId && (
+            <div className="text-sm text-gold-400 mt-2 font-semibold">
+              Click a window slot above to place, or click the card again to cancel
             </div>
-            {availableWindows.length === 0 ? (
-              <div className="text-[10px] text-parchment-600 italic">No empty windows available</div>
-            ) : (
-              <div className="flex gap-1.5 flex-wrap">
-                {availableWindows.map(({ i }) => (
-                  <button
-                    key={i}
-                    onClick={() => { onPlaceInWindow(placingCardId, i); setPlacingCardId(null) }}
-                    className="text-xs bg-gold-600/80 hover:bg-gold-500 text-ink-900 font-bold rounded px-2 py-1"
-                  >
-                    Window {i + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={() => setPlacingCardId(null)}
-              className="text-[10px] text-parchment-500 hover:text-parchment-300 mt-1.5 block"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Hoard list */}
-        <div className="space-y-1.5">
-          {player.hoard.map(card => (
-            <div
-              key={card.id}
-              className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border ${
-                placingCardId === card.id
-                  ? 'bg-gold-500/10 border-gold-400/60'
-                  : 'bg-ink-800/60 border-parchment-800/30'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className={`text-[9px] font-bold rounded px-1 py-0.5 uppercase flex-shrink-0 ${
-                  card.type === 'ARM' ? 'bg-orange-600 text-orange-100'
-                  : card.type === 'CON' ? 'bg-blue-600 text-blue-100'
-                  : card.type === 'TRI' ? 'bg-green-600 text-green-100'
-                  : 'bg-pink-600 text-pink-100'
-                }`}>{card.type}</span>
-                <span className="text-xs text-parchment-200 truncate">{card.name}</span>
-                <span className="text-[10px] text-parchment-500 flex-shrink-0">${card.value}</span>
-              </div>
-              <div className="flex gap-1 flex-shrink-0">
-                {availableWindows.length > 0 && (
-                  <button
-                    onClick={() => setPlacingCardId(placingCardId === card.id ? null : card.id)}
-                    className={`text-[8px] font-bold rounded px-1.5 py-0.5 ${
-                      placingCardId === card.id
-                        ? 'bg-gold-500 text-ink-900'
-                        : 'bg-blue-900/80 hover:bg-blue-800 text-blue-200'
+        {/* Hoard section */}
+        <div>
+          <div className="text-sm font-semibold text-parchment-400 uppercase tracking-wide mb-2">
+            Hoard ({player.hoard.length}/8)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {player.hoard.map(card => {
+              const isSelected = placingCardId === card.id
+              return (
+                <div key={card.id} className="flex flex-col items-center gap-1">
+                  <div
+                    onClick={() => setPlacingCardId(isSelected ? null : card.id)}
+                    className={`cursor-pointer rounded-lg transition-all ${
+                      isSelected ? 'ring-2 ring-gold-400 ring-offset-1 ring-offset-ink-900' : 'hover:ring-1 hover:ring-parchment-500'
                     }`}
                   >
-                    → Window
-                  </button>
-                )}
-                <button
-                  onClick={() => { onDiscard(card.id); if (placingCardId === card.id) setPlacingCardId(null) }}
-                  className="text-[8px] bg-red-900/80 hover:bg-red-800 text-red-200 font-bold rounded px-1.5 py-0.5"
-                >
-                  Discard
-                </button>
-              </div>
-            </div>
-          ))}
+                    <ResourceCardTile card={card} size="sm" />
+                  </div>
+                  {isSelected && (
+                    <button
+                      onClick={() => { onDiscard(card.id); setPlacingCardId(null) }}
+                      className="text-xs bg-red-900/80 hover:bg-red-800 text-red-200 font-bold rounded px-2 py-0.5 w-full"
+                    >
+                      Discard
+                    </button>
+                  )}
+                  {!isSelected && (
+                    <button
+                      onClick={() => { onDiscard(card.id) }}
+                      className="text-xs bg-red-900/60 hover:bg-red-800/80 text-red-300 rounded px-2 py-0.5 w-full opacity-60 hover:opacity-100 transition-opacity"
+                    >
+                      Discard
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-// ---- Negotiate Modal ----
+// ---- Negotiate Modal (step 1 — target picks counter-card) ----
 
 type NegotiatePendingType = NonNullable<GameState['negotiatePending']>
+
+function cardTypeBadge(type: string) {
+  const cls = type === 'ARM' ? 'bg-orange-600 text-orange-100'
+    : type === 'CON' ? 'bg-blue-600 text-blue-100'
+    : type === 'TRI' ? 'bg-green-600 text-green-100'
+    : 'bg-pink-600 text-pink-100'
+  return <span className={`text-[9px] font-bold rounded px-1.5 py-0.5 uppercase flex-shrink-0 ${cls}`}>{type}</span>
+}
+
+function NegotiateCardDisplay({ card, label }: { card: { name: string; type: string; value: number; imageFile: string }; label: string }) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="text-[10px] text-parchment-500 uppercase tracking-wide">{label}</div>
+      <div className="w-24 rounded-lg overflow-hidden border-2 border-parchment-700/40 shadow-lg">
+        <img src={card.imageFile} alt={card.name} className="w-full object-cover" />
+      </div>
+      <div className="flex items-center gap-1 flex-wrap justify-center">
+        {cardTypeBadge(card.type)}
+        <span className="text-xs text-parchment-200 font-semibold">{card.name}</span>
+      </div>
+      <div className="text-xs text-parchment-500">${card.value}</div>
+    </div>
+  )
+}
 
 function NegotiateModal({
   pending,
   players,
-  onAccept,
+  onCounter,
   onDecline,
 }: {
   pending: NegotiatePendingType
   players: Player[]
-  onAccept: (counterCardId: string) => void
+  onCounter: (counterCardId: string) => void
   onDecline: () => void
 }) {
   const [counterCardId, setCounterCardId] = useState('')
@@ -1417,76 +2163,128 @@ function NegotiateModal({
 
   if (!proposer || !target || !offeredCard) return null
 
-  const resolvedCounter = counterCardId || target.hoard[0]?.id || ''
+  const selectedCounterCard = target.hoard.find(c => c.id === counterCardId) ?? target.hoard[0] ?? null
+  const resolvedCounterId = selectedCounterCard?.id ?? ''
 
   return (
     <div className="fixed inset-0 z-[315] flex items-center justify-center bg-black/60">
-      <div className="bg-ink-900 border-2 border-green-500/50 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
+      <div className="bg-ink-900 border-2 border-green-500/50 rounded-xl p-5 shadow-2xl max-w-md w-full mx-4">
         <div className="text-center mb-4">
-          <div className="text-lg font-display font-bold text-green-300">🤝 Trade Proposal</div>
-          <div className="text-xs text-parchment-400 mt-1">
-            <span className="text-parchment-200 font-semibold">{proposer.name}</span> wants to trade with{' '}
-            <span className="text-parchment-200 font-semibold">{target.name}</span>
+          <div className="text-xl font-display font-bold text-green-300">🤝 Trade Proposal</div>
+          <div className="text-sm text-parchment-400 mt-1">
+            <span className="text-parchment-200 font-semibold">{proposer.name}</span> wants to trade.
+            Pick what to offer back, {target.name}.
           </div>
         </div>
 
-        {/* What's being offered */}
-        <div className="bg-ink-800/60 border border-green-700/30 rounded-lg p-3 mb-4">
-          <div className="text-[10px] text-parchment-500 mb-1">{proposer.name} offers:</div>
-          <div className="flex items-center gap-2">
-            <span className={`text-[9px] font-bold rounded px-1.5 py-0.5 uppercase flex-shrink-0 ${
-              offeredCard.type === 'ARM' ? 'bg-orange-600 text-orange-100'
-              : offeredCard.type === 'CON' ? 'bg-blue-600 text-blue-100'
-              : offeredCard.type === 'TRI' ? 'bg-green-600 text-green-100'
-              : 'bg-pink-600 text-pink-100'
-            }`}>{offeredCard.type}</span>
-            <span className="text-sm font-semibold text-parchment-100">{offeredCard.name}</span>
-            <span className="text-xs text-parchment-500 ml-auto">${offeredCard.value}</span>
-          </div>
-          <div className="text-[9px] text-green-400 mt-1">
-            ✦ Both players gain +2 coins if accepted
-          </div>
-          {pending.paladinRepType && (
-            <div className="text-[9px] text-blue-300 mt-1">
-              ◆ Honourable Trade: both players also gain {pending.paladinRepType} Rep on accept
-            </div>
-          )}
+        {/* Offered card */}
+        <div className="flex justify-center mb-4">
+          <NegotiateCardDisplay card={offeredCard} label={`${proposer.name} offers`} />
         </div>
 
-        {/* Target's counter-offer */}
+        <div className="text-xs text-green-400 text-center mb-3">✦ Both players gain +2 coins if accepted</div>
+        {pending.paladinRepType && (
+          <div className="text-xs text-blue-300 text-center mb-3">
+            ◆ Honourable Trade: both also gain {pending.paladinRepType} Rep on accept
+          </div>
+        )}
+
+        {/* Counter-card picker */}
         {target.hoard.length === 0 ? (
-          <div className="text-xs text-parchment-600 italic text-center mb-4">
-            {target.name} has nothing to offer — can only decline.
-          </div>
+          <div className="text-sm text-parchment-600 italic text-center mb-4">You have nothing to offer — you can only decline.</div>
         ) : (
           <div className="mb-4">
-            <div className="text-[10px] text-parchment-400 mb-1">{target.name} — choose what to offer back:</div>
-            <select
-              value={resolvedCounter}
-              onChange={e => setCounterCardId(e.target.value)}
-              className="bg-ink-700 border border-parchment-700/30 rounded px-2 py-1 text-xs text-parchment-200 w-full"
-            >
+            <div className="text-sm text-parchment-400 mb-2 text-center">Choose your counter-offer:</div>
+            <div className="flex flex-wrap gap-2 justify-center max-h-40 overflow-y-auto">
               {target.hoard.map(c => (
-                <option key={c.id} value={c.id}>{c.name} ({c.type}, ${c.value})</option>
+                <button
+                  key={c.id}
+                  onClick={() => setCounterCardId(c.id)}
+                  className={`relative w-20 rounded-lg overflow-hidden border-2 transition-all ${
+                    (counterCardId ? counterCardId === c.id : c.id === target.hoard[0]?.id)
+                      ? 'border-green-400 ring-2 ring-green-400/50'
+                      : 'border-parchment-700/40 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  <img src={c.imageFile} alt={c.name} className="w-full object-cover" />
+                </button>
               ))}
-            </select>
+            </div>
+            {selectedCounterCard && (
+              <div className="text-center mt-2 text-xs text-parchment-300">
+                {selectedCounterCard.name} ({selectedCounterCard.type}, ${selectedCounterCard.value})
+              </div>
+            )}
           </div>
         )}
 
         <div className="flex gap-2">
+          <button onClick={onDecline} className="btn-secondary flex-1 text-sm py-2">✗ Decline</button>
           <button
-            onClick={onDecline}
-            className="btn-secondary flex-1 text-sm py-2"
-          >
-            ✗ Decline
-          </button>
-          <button
-            onClick={() => onAccept(resolvedCounter)}
-            disabled={target.hoard.length === 0}
+            onClick={() => resolvedCounterId && onCounter(resolvedCounterId)}
+            disabled={!resolvedCounterId}
             className="btn-primary flex-1 text-sm py-2 font-semibold disabled:opacity-40"
           >
-            ✓ Accept Trade
+            Send Counter-Offer →
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- Negotiate Review Modal (step 2 — proposer reviews and accepts/declines) ----
+
+type NegotiateReviewType = NonNullable<GameState['negotiateReview']>
+
+function NegotiateReviewModal({
+  review,
+  players,
+  onAccept,
+  onDecline,
+}: {
+  review: NegotiateReviewType
+  players: Player[]
+  onAccept: () => void
+  onDecline: () => void
+}) {
+  const proposer = players.find(p => p.id === review.proposerId)
+  const target = players.find(p => p.id === review.targetId)
+  const offeredCard = proposer?.hoard.find(c => c.id === review.offeredCardId)
+  // Counter card may have already moved; fall back to a stale lookup in the target's hoard
+  const counterCard = target?.hoard.find(c => c.id === review.counterCardId)
+
+  if (!proposer || !target || !offeredCard || !counterCard) return null
+
+  return (
+    <div className="fixed inset-0 z-[315] flex items-center justify-center bg-black/60">
+      <div className="bg-ink-900 border-2 border-green-500/50 rounded-xl p-5 shadow-2xl max-w-md w-full mx-4">
+        <div className="text-center mb-4">
+          <div className="text-xl font-display font-bold text-green-300">🤝 Review Counter-Offer</div>
+          <div className="text-sm text-parchment-400 mt-1">
+            <span className="text-parchment-200 font-semibold">{target.name}</span> is offering this in exchange, {proposer.name}. Accept?
+          </div>
+        </div>
+
+        {/* Side-by-side cards */}
+        <div className="flex items-start justify-center gap-6 mb-4">
+          <NegotiateCardDisplay card={offeredCard} label="You give" />
+          <div className="flex flex-col items-center justify-center pt-8 text-parchment-500">
+            <span className="text-2xl">⇄</span>
+          </div>
+          <NegotiateCardDisplay card={counterCard} label={`${target.name} gives`} />
+        </div>
+
+        <div className="text-xs text-green-400 text-center mb-2">✦ Both players gain +2 coins</div>
+        {review.paladinRepType && (
+          <div className="text-xs text-blue-300 text-center mb-3">
+            ◆ Honourable Trade: both also gain {review.paladinRepType} Rep
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={onDecline} className="btn-secondary flex-1 text-sm py-2">✗ Decline</button>
+          <button onClick={onAccept} className="btn-primary flex-1 text-sm py-2 font-semibold">✓ Accept Trade</button>
         </div>
       </div>
     </div>
@@ -1539,13 +2337,13 @@ function RighteousDuelChallengeModal({
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/70 p-3">
       <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-4 shadow-2xl w-full max-w-sm mx-auto max-h-[90vh] overflow-y-auto">
         <div className="text-center mb-4">
-          <div className="text-lg font-display font-bold text-gold-300">⚔ Righteous Duel!</div>
-          <div className="text-xs text-parchment-300 mt-0.5">
+          <div className="text-xl font-display font-bold text-gold-300">⚔ Righteous Duel!</div>
+          <div className="text-sm text-parchment-300 mt-0.5">
             <span className="text-parchment-100 font-semibold">{challenger.name}</span> challenges{' '}
             <span className="text-parchment-100 font-semibold">{target.name}</span>
           </div>
           {bonus > 0 && (
-            <div className="text-[10px] text-gold-400 mt-1">
+            <div className="text-sm text-gold-400 mt-1">
               {challenger.name} rolls with +{bonus} bonus ({bonus} Renown card{bonus !== 1 ? 's' : ''})
             </div>
           )}
@@ -1553,27 +2351,27 @@ function RighteousDuelChallengeModal({
 
         {/* Challenger's stake */}
         <div className="bg-gold-900/30 border border-gold-700/40 rounded-lg p-2 mb-2">
-          <div className="text-[10px] font-semibold text-gold-300 mb-1">{challenger.name} stakes:</div>
+          <div className="text-sm font-semibold text-gold-300 mb-1">{challenger.name} stakes:</div>
           <StakeSummaryLine label="" stake={pending.challengerStake} />
         </div>
 
         {/* Target chooses their own stake */}
         <div className="bg-ink-800/60 border border-parchment-700/30 rounded-lg p-2 mb-3 space-y-1.5">
-          <div className="text-[10px] font-semibold text-parchment-300">{target.name} — choose your stake:</div>
+          <div className="text-sm font-semibold text-parchment-300">{target.name} — choose your stake:</div>
           {!canAccept && (
-            <div className="text-[9px] text-red-400 italic">
+            <div className="text-xs text-red-400 italic">
               No rep tokens and fewer than 2 hoard cards — cannot accept.
             </div>
           )}
           {canAccept && targetHasRep && (
             <>
-              <div className="text-[9px] text-parchment-400">Stake 1 rep token:</div>
+              <div className="text-xs text-parchment-400">Stake 1 rep token:</div>
               <div className="flex flex-wrap gap-1">
                 {((['ARM', 'CON', 'TRI', 'TRG'] as const)).filter(rt => target.rep[rt] > 0).map(rt => (
                   <button
                     key={rt}
                     onClick={() => setTargetStake({ repType: rt, cardIds: [] })}
-                    className={`text-[9px] font-bold rounded px-2 py-0.5 border transition-colors ${
+                    className={`text-xs font-bold rounded px-2 py-0.5 border transition-colors ${
                       targetStake.repType === rt ? STAKE_BADGE[rt] : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'
                     }`}
                   >
@@ -1585,7 +2383,7 @@ function RighteousDuelChallengeModal({
           )}
           {canAccept && !targetHasRep && (
             <>
-              <div className="text-[9px] text-parchment-400">No rep — stake 2 hoard cards ({targetStake.cardIds.length}/2):</div>
+              <div className="text-xs text-parchment-400">No rep — stake 2 hoard cards ({targetStake.cardIds.length}/2):</div>
               <div className="flex flex-wrap gap-1">
                 {target.hoard.map(c => {
                   const sel = targetStake.cardIds.includes(c.id)
@@ -1597,7 +2395,7 @@ function RighteousDuelChallengeModal({
                         cardIds: sel ? s.cardIds.filter(id => id !== c.id)
                           : s.cardIds.length < 2 ? [...s.cardIds, c.id] : s.cardIds,
                       }))}
-                      className={`text-[8px] rounded px-1.5 py-0.5 border font-semibold transition-colors ${
+                      className={`text-xs rounded px-1.5 py-0.5 border font-semibold transition-colors ${
                         sel ? 'bg-gold-600/60 border-gold-400 text-gold-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
                       }`}
                     >
@@ -1626,10 +2424,10 @@ function RighteousDuelChallengeModal({
           </div>
         ) : (
           <div className="mt-1 bg-red-950/40 border border-red-700/40 rounded-lg p-2 space-y-2">
-            <div className="text-[10px] font-semibold text-red-300">Declining the duel…</div>
+            <div className="text-sm font-semibold text-red-300">Declining the duel…</div>
             {target.hoard.length > 0 ? (
               <>
-                <div className="text-[9px] text-parchment-400">
+                <div className="text-xs text-parchment-400">
                   Choose 1 hoard card to discard (penalty for refusing):
                 </div>
                 <div className="flex flex-wrap gap-1">
@@ -1637,7 +2435,7 @@ function RighteousDuelChallengeModal({
                     <button
                       key={c.id}
                       onClick={() => setDeclineCardId(c.id)}
-                      className={`text-[8px] rounded px-1.5 py-0.5 border font-semibold transition-colors ${
+                      className={`text-xs rounded px-1.5 py-0.5 border font-semibold transition-colors ${
                         declineCardId === c.id
                           ? 'bg-red-600/60 border-red-400 text-red-100'
                           : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
@@ -1647,19 +2445,19 @@ function RighteousDuelChallengeModal({
                     </button>
                   ))}
                 </div>
-                <div className="text-[9px] text-amber-300">
+                <div className="text-xs text-amber-300">
                   {challenger.name} will then Appraise 1 (look at top 4, keep 1).
                 </div>
               </>
             ) : (
-              <div className="text-[9px] text-parchment-400">
+              <div className="text-xs text-parchment-400">
                 Your hoard is empty — you will pay <span className="text-red-300 font-semibold">2 coins</span> instead.
                 <br />
                 <span className="text-amber-300">{challenger.name} will then Appraise 1.</span>
               </div>
             )}
             <div className="flex gap-2">
-              <button onClick={() => setDeclineOpen(false)} className="btn-secondary flex-1 text-xs py-1.5">
+              <button onClick={() => setDeclineOpen(false)} className="btn-secondary flex-1 text-sm py-1.5">
                 ← Back
               </button>
               <button
@@ -1679,6 +2477,39 @@ function RighteousDuelChallengeModal({
 
 // ---- Paladin Righteous Duel Result Modal ----
 
+const DUEL_ANIM_STYLE = (
+  <style>{`
+    @keyframes dice-tumble {
+      0%   { transform: rotate(-10deg) scale(0.93); }
+      20%  { transform: rotate(7deg)   scale(1.07); }
+      40%  { transform: rotate(-6deg)  scale(0.96); }
+      60%  { transform: rotate(8deg)   scale(1.04); }
+      80%  { transform: rotate(-4deg)  scale(0.98); }
+      100% { transform: rotate(9deg)   scale(1.05); }
+    }
+    @keyframes dice-land {
+      0%   { transform: scale(1.35) rotate(-5deg); opacity: 0.8; }
+      55%  { transform: scale(0.90) rotate(1.5deg); opacity: 1; }
+      78%  { transform: scale(1.08) rotate(-0.5deg); }
+      100% { transform: scale(1)    rotate(0deg); }
+    }
+    @keyframes dice-modal-in {
+      from { transform: scale(0.85) translateY(12px); opacity: 0; }
+      to   { transform: scale(1)    translateY(0);    opacity: 1; }
+    }
+    @keyframes dice-result-in {
+      from { transform: translateY(6px); opacity: 0; }
+      to   { transform: translateY(0);   opacity: 1; }
+    }
+    .dice-tumbling { animation: dice-tumble 0.16s linear infinite; }
+    .dice-landing  { animation: dice-land 0.38s cubic-bezier(.22,.68,0,1.3) forwards; }
+    .dice-modal-in { animation: dice-modal-in 0.22s ease-out both; }
+    .dice-result-in { animation: dice-result-in 0.25s ease-out 0.06s both; }
+  `}</style>
+)
+
+const FACES_DUEL = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+
 function StakeSummaryLine({ label, stake }: { label: string; stake: DuelStake }) {
   const desc = stake.repType !== null
     ? `1 ${stake.repType} rep token`
@@ -1686,7 +2517,7 @@ function StakeSummaryLine({ label, stake }: { label: string; stake: DuelStake })
       ? `${stake.cardIds.length} hoard card${stake.cardIds.length !== 1 ? 's' : ''}`
       : 'nothing'
   return (
-    <div className="text-[10px] text-parchment-400">
+    <div className="text-xs text-parchment-400">
       {label && <span className="text-parchment-300 font-semibold">{label}:{' '}</span>}
       {desc}
     </div>
@@ -1709,6 +2540,40 @@ function RighteousDuelModal({
   onDismiss: () => void
 }) {
   const [appraiseSelected, setAppraiseSelected] = useState<string[]>([])
+  const [duelPhase, setDuelPhase] = useState<'rolling' | 'landing' | 'settled'>('rolling')
+  const [duelDisplayed, setDuelDisplayed] = useState<[number, number]>(() => [
+    Math.ceil(Math.random() * 6),
+    Math.ceil(Math.random() * 6),
+  ])
+  const duelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (result.declined) return
+    const rollValues: [number, number] = [result.challengerRoll, result.targetRoll]
+    let frame = 0
+    const TOTAL_FRAMES = 18
+
+    function tick() {
+      frame++
+      if (frame >= TOTAL_FRAMES) {
+        setDuelDisplayed(rollValues)
+        setDuelPhase('landing')
+        duelTimerRef.current = setTimeout(() => setDuelPhase('settled'), 400)
+        return
+      }
+      setDuelDisplayed(rollValues.map(rv => {
+        const pool = frame >= TOTAL_FRAMES - 2
+          ? [rv]
+          : [1, 2, 3, 4, 5, 6].filter(v => v !== rv)
+        return pool[Math.floor(Math.random() * pool.length)]
+      }) as [number, number])
+      const t = 45 + Math.pow(frame / TOTAL_FRAMES, 2.2) * 140
+      duelTimerRef.current = setTimeout(tick, t)
+    }
+
+    duelTimerRef.current = setTimeout(tick, 45)
+    return () => { if (duelTimerRef.current) clearTimeout(duelTimerRef.current) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const challenger = players.find(p => p.id === result.challengerId)
   const target = players.find(p => p.id === result.targetId)
@@ -1723,15 +2588,15 @@ function RighteousDuelModal({
       <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
         <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 max-h-[90vh] overflow-y-auto">
           <div className="text-center mb-3">
-            <div className="text-lg font-display font-bold text-amber-300">⚔ Challenge Declined</div>
-            <div className="text-xs text-parchment-400 mt-1">
+            <div className="text-xl font-display font-bold text-amber-300">⚔ Challenge Declined</div>
+            <div className="text-sm text-parchment-400 mt-1">
               <span className="text-parchment-200 font-semibold">{target?.name}</span> refused the duel.
             </div>
           </div>
 
           {/* Target's penalty */}
           <div className="bg-red-950/40 border border-red-700/40 rounded-lg p-2 mb-3">
-            <div className="text-[10px] text-parchment-400">
+            <div className="text-sm text-parchment-400">
               {result.declineTargetCard
                 ? <><span className="text-parchment-200 font-semibold">{target?.name}</span> discarded{' '}
                     <span className="text-red-300 font-semibold">{result.declineTargetCard.name}</span>.</>
@@ -1744,7 +2609,7 @@ function RighteousDuelModal({
           {/* Paladin's Appraise 1 */}
           {ownAppraise && ownAppraise.cards.length > 0 ? (
             <div className="bg-amber-950/40 border border-amber-700/40 rounded-lg p-2 mb-3 space-y-1.5">
-              <div className="text-[10px] font-semibold text-amber-300">
+              <div className="text-sm font-semibold text-amber-300">
                 {challenger?.name} — Appraise 1: choose 1 card to keep
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -1768,7 +2633,7 @@ function RighteousDuelModal({
             </div>
           ) : (
             !ownAppraise && (
-              <div className="text-[10px] text-parchment-500 italic text-center mb-3">
+              <div className="text-sm text-parchment-500 italic text-center mb-3">
                 Deck was empty — Appraise skipped.
               </div>
             )
@@ -1789,86 +2654,158 @@ function RighteousDuelModal({
   // ── Duel resolved path ──────────────────────────────────
   return (
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
-      <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
+      {DUEL_ANIM_STYLE}
+      <div className="dice-modal-in bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
         <div className="text-center mb-4">
-          <div className="text-lg font-display font-bold text-gold-300">⚔ Righteous Duel!</div>
-          <div className="text-xs text-parchment-500 mt-0.5">
+          <div className="text-xl font-display font-bold text-gold-300">⚔ Righteous Duel!</div>
+          <div className="text-sm text-parchment-500 mt-0.5">
             {challenger?.name} vs {target?.name}
           </div>
         </div>
 
-        {/* Rolls */}
-        <div className="flex justify-center gap-4 mb-4">
-          {/* Challenger */}
-          <div className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg border ${
-            result.winnerId === result.challengerId
-              ? 'bg-gold-500/20 border-gold-400 text-gold-200'
-              : 'bg-ink-800 border-parchment-700/30 text-parchment-400'
-          }`}>
-            <img
-              src={`/cards/tokens/${challenger ? challenger.classId.charAt(0).toUpperCase() + challenger.classId.slice(1) : ''}.png`}
-              alt={challenger?.name}
-              className="w-8 h-8 rounded-full border border-white/30 object-cover"
-            />
-            <div className="text-xs font-semibold">{challenger?.name.split(' ')[0]}</div>
-            <div className="text-2xl font-bold font-display">
-              {result.challengerRoll + result.challengerBonus}
+        {/* Animated dice — rolling/landing phase */}
+        {(duelPhase === 'rolling' || duelPhase === 'landing') && (
+          <div className="flex justify-center gap-4 mb-4">
+            {/* Challenger die */}
+            <div className="flex flex-col items-center gap-1 px-4 py-2 rounded-lg border bg-ink-800 border-parchment-700/30 text-parchment-400">
+              <img
+                src={`/cards/tokens/${challenger ? challenger.classId.charAt(0).toUpperCase() + challenger.classId.slice(1) : ''}.png`}
+                alt={challenger?.name}
+                className="w-7 h-7 rounded-full border border-white/30 object-cover"
+              />
+              <div className="text-sm font-semibold">{challenger?.name.split(' ')[0]}</div>
+              <div
+                className={`text-[64px] leading-none select-none ${
+                  duelPhase === 'rolling' ? 'dice-tumbling' : 'dice-landing'
+                }`}
+              >
+                {FACES_DUEL[duelDisplayed[0] - 1]}
+              </div>
+              <div style={{ height: '2rem' }} />
             </div>
-            {result.challengerBonus > 0 && (
-              <div className="text-[9px] text-gold-400">{result.challengerRoll} +{result.challengerBonus}</div>
-            )}
-            {result.winnerId === result.challengerId && (
-              <div className="text-[10px] text-gold-400 font-semibold">WINNER</div>
-            )}
-          </div>
 
-          <div className="flex items-center text-parchment-600 font-bold text-sm">VS</div>
+            <div className="flex items-center text-parchment-600 font-bold text-sm">VS</div>
 
-          {/* Target */}
-          <div className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg border ${
-            result.winnerId === result.targetId
-              ? 'bg-gold-500/20 border-gold-400 text-gold-200'
-              : 'bg-ink-800 border-parchment-700/30 text-parchment-400'
-          }`}>
-            <img
-              src={`/cards/tokens/${target ? target.classId.charAt(0).toUpperCase() + target.classId.slice(1) : ''}.png`}
-              alt={target?.name}
-              className="w-8 h-8 rounded-full border border-white/30 object-cover"
-            />
-            <div className="text-xs font-semibold">{target?.name.split(' ')[0]}</div>
-            <div className="text-2xl font-bold font-display">{result.targetRoll}</div>
-            {result.winnerId === result.targetId && (
-              <div className="text-[10px] text-gold-400 font-semibold">WINNER</div>
-            )}
-          </div>
-        </div>
-
-        {/* Outcome */}
-        <div className="text-center text-sm mb-3">
-          {isTie ? (
-            <span className="text-parchment-400">Tie — stakes returned to both.</span>
-          ) : (
-            <span className="text-gold-300 font-semibold">
-              {winner?.name} takes the spoils!
-            </span>
-          )}
-        </div>
-
-        {/* Stakes summary */}
-        {!isTie && (
-          <div className="bg-ink-800/50 rounded-lg p-2 mb-3 space-y-1 text-[10px]">
-            <StakeSummaryLine label={`${challenger?.name} staked`} stake={result.challengerStake} />
-            <StakeSummaryLine label={`${target?.name} staked`} stake={result.targetStake} />
+            {/* Target die */}
+            <div className="flex flex-col items-center gap-1 px-4 py-2 rounded-lg border bg-ink-800 border-parchment-700/30 text-parchment-400">
+              <img
+                src={`/cards/tokens/${target ? target.classId.charAt(0).toUpperCase() + target.classId.slice(1) : ''}.png`}
+                alt={target?.name}
+                className="w-7 h-7 rounded-full border border-white/30 object-cover"
+              />
+              <div className="text-sm font-semibold">{target?.name.split(' ')[0]}</div>
+              <div
+                className={`text-[64px] leading-none select-none ${
+                  duelPhase === 'rolling' ? 'dice-tumbling' : 'dice-landing'
+                }`}
+              >
+                {FACES_DUEL[duelDisplayed[1] - 1]}
+              </div>
+              <div style={{ height: '2rem' }} />
+            </div>
           </div>
         )}
 
-        <button
-          onClick={onDismiss}
-          className="btn-primary w-full text-sm py-2 font-semibold"
-        >
-          Continue →
-        </button>
+        {/* Settled state — full result */}
+        {duelPhase === 'settled' && (
+          <>
+            {/* Rolls */}
+            <div className="flex justify-center gap-4 mb-4">
+              {/* Challenger */}
+              <div className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg border ${
+                result.winnerId === result.challengerId
+                  ? 'bg-gold-500/20 border-gold-400 text-gold-200'
+                  : 'bg-ink-800 border-parchment-700/30 text-parchment-400'
+              }`}>
+                <img
+                  src={`/cards/tokens/${challenger ? challenger.classId.charAt(0).toUpperCase() + challenger.classId.slice(1) : ''}.png`}
+                  alt={challenger?.name}
+                  className="w-8 h-8 rounded-full border border-white/30 object-cover"
+                />
+                <div className="text-sm font-semibold">{challenger?.name.split(' ')[0]}</div>
+                <div className="dice-result-in text-2xl font-bold font-display">
+                  {result.challengerRoll + result.challengerBonus}
+                </div>
+                {result.challengerBonus > 0 && (
+                  <div className="text-xs text-gold-400">{result.challengerRoll} +{result.challengerBonus}</div>
+                )}
+                {result.winnerId === result.challengerId && (
+                  <div className="text-xs text-gold-400 font-semibold">WINNER</div>
+                )}
+              </div>
+
+              <div className="flex items-center text-parchment-600 font-bold text-sm">VS</div>
+
+              {/* Target */}
+              <div className={`flex flex-col items-center gap-1 px-4 py-2 rounded-lg border ${
+                result.winnerId === result.targetId
+                  ? 'bg-gold-500/20 border-gold-400 text-gold-200'
+                  : 'bg-ink-800 border-parchment-700/30 text-parchment-400'
+              }`}>
+                <img
+                  src={`/cards/tokens/${target ? target.classId.charAt(0).toUpperCase() + target.classId.slice(1) : ''}.png`}
+                  alt={target?.name}
+                  className="w-8 h-8 rounded-full border border-white/30 object-cover"
+                />
+                <div className="text-sm font-semibold">{target?.name.split(' ')[0]}</div>
+                <div className="dice-result-in text-2xl font-bold font-display">{result.targetRoll}</div>
+                {result.winnerId === result.targetId && (
+                  <div className="text-xs text-gold-400 font-semibold">WINNER</div>
+                )}
+              </div>
+            </div>
+
+            {/* Outcome */}
+            <div className="dice-result-in text-center text-base mb-3">
+              {isTie ? (
+                <span className="text-parchment-400">Tie — stakes returned to both.</span>
+              ) : (
+                <span className="text-gold-300 font-semibold">
+                  {winner?.name} takes the spoils!
+                </span>
+              )}
+            </div>
+
+            {/* Stakes summary */}
+            {!isTie && (
+              <div className="bg-ink-800/50 rounded-lg p-2 mb-3 space-y-1 text-sm">
+                <StakeSummaryLine label={`${challenger?.name} staked`} stake={result.challengerStake} />
+                <StakeSummaryLine label={`${target?.name} staked`} stake={result.targetStake} />
+              </div>
+            )}
+
+            <button
+              onClick={onDismiss}
+              className="btn-primary w-full text-sm py-2 font-semibold"
+            >
+              Continue →
+            </button>
+          </>
+        )}
       </div>
+    </div>
+  )
+}
+
+// ---- Waiting helpers ----
+
+/** Full-screen overlay shown to players who are NOT the one acting on an interrupt. */
+function WaitingOverlay({ name, action }: { name?: string; action: string }) {
+  return (
+    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
+      <div className="bg-ink-900 border-2 border-parchment-700/40 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+        <div className="text-xl animate-pulse">⏳</div>
+        <WaitingBadge name={name} action={action} />
+      </div>
+    </div>
+  )
+}
+
+/** Inline waiting message — used inside modals that already have their own container. */
+function WaitingBadge({ name, action }: { name?: string; action: string }) {
+  return (
+    <div className="text-base text-parchment-400 animate-pulse">
+      Waiting for <span className="font-semibold text-gold-300">{name ?? '...'}</span> — {action}
     </div>
   )
 }
@@ -1903,18 +2840,18 @@ function ShamanCallLightningModal({
     <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
       <div className="bg-ink-900 border-2 border-blue-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 max-h-[85vh] overflow-y-auto">
         <div className="text-center mb-4">
-          <div className="text-lg font-display font-bold text-blue-400">⚡ Call Lightning!</div>
-          <div className="text-xs text-parchment-400 mt-1">
+          <div className="text-xl font-display font-bold text-blue-400">⚡ Call Lightning!</div>
+          <div className="text-sm text-parchment-400 mt-1">
             <span className="text-parchment-200 font-semibold">{shaman.name}</span> struck{' '}
             <span className="text-parchment-200 font-semibold">{target.name}</span> with lightning.
           </div>
-          <div className="text-[10px] text-parchment-500 mt-1">
+          <div className="text-sm text-parchment-500 mt-1">
             {target.name}: choose {needed} resource{needed !== 1 ? 's' : ''} to discard.
           </div>
         </div>
 
         {target.hoard.length === 0 ? (
-          <div className="text-xs text-parchment-600 italic text-center mb-4">Hoard is empty — nothing to discard.</div>
+          <div className="text-sm text-parchment-600 italic text-center mb-4">Hoard is empty — nothing to discard.</div>
         ) : (
           <div className="flex flex-wrap gap-1.5 justify-center mb-4">
             {target.hoard.map(card => (
@@ -1929,7 +2866,7 @@ function ShamanCallLightningModal({
           </div>
         )}
 
-        <div className="text-[10px] text-parchment-500 text-center mb-3">
+        <div className="text-sm text-parchment-500 text-center mb-3">
           {chosen.length}/{needed} selected
         </div>
 
@@ -1976,19 +2913,19 @@ function TrickShotBonusModal({
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
       <div className="bg-ink-900 border-2 border-green-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 space-y-3">
         <div className="text-center">
-          <div className="text-base font-display font-bold text-green-300">⚡ Trick Shot Bonus</div>
-          <div className="text-xs text-parchment-400 mt-1">
+          <div className="text-lg font-display font-bold text-green-300">⚡ Trick Shot Bonus</div>
+          <div className="text-sm text-parchment-400 mt-1">
             {ranger?.name} — the re-roll was equal or lower. Choose your bonus:
           </div>
         </div>
         <div className="space-y-1.5">
           <label className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded border ${choice === 'launder' ? 'bg-blue-900/30 border-blue-600/40' : 'border-parchment-800/30'}`}>
             <input type="radio" name="tsbChoice" checked={choice === 'launder'} onChange={() => setChoice('launder')} className="accent-blue-500" />
-            <span className="text-[10px] font-semibold text-parchment-300">Launder 1 — draw 1 resource blind</span>
+            <span className="text-sm font-semibold text-parchment-300">Launder 1 — draw 1 resource blind</span>
           </label>
           <label className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded border ${choice === 'break' ? 'bg-red-900/30 border-red-600/40' : 'border-parchment-800/30'}`}>
             <input type="radio" name="tsbChoice" checked={choice === 'break'} onChange={() => setChoice('break')} className="accent-red-500" />
-            <span className="text-[10px] font-semibold text-parchment-300">Break 1 window for a player you didn't target</span>
+            <span className="text-sm font-semibold text-parchment-300">Break 1 window for a player you didn't target</span>
           </label>
           {choice === 'break' && (
             <div className="flex flex-wrap gap-1 mt-1">
@@ -1997,7 +2934,7 @@ function TrickShotBonusModal({
                   key={w.windowId}
                   type="button"
                   onClick={() => setSelectedWindowId(w.windowId)}
-                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                  className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
                     selectedWindowId === w.windowId
                       ? 'bg-red-600/30 border-red-400 text-red-200'
                       : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
@@ -2026,11 +2963,13 @@ function TrickShotBonusModal({
 function RangerVisitorTradeModal({
   ranger,
   fleaMarket,
+  tradesRemaining,
   onTrade,
   onSkip,
 }: {
   ranger: Player
   fleaMarket: (ResourceCard | null)[]
+  tradesRemaining: number
   onTrade: (cardId: string, fleaIdx: number) => void
   onSkip: () => void
 }) {
@@ -2040,13 +2979,24 @@ function RangerVisitorTradeModal({
   const fleaOptions = fleaMarket.map((c, i) => ({ c, i })).filter(x => x.c !== null)
   const canTrade = !!playerCardId && fleaIdx !== null
 
+  // Reset selections each time tradesRemaining changes (next trade in the sequence)
+  const prevRemaining = useRef(tradesRemaining)
+  if (prevRemaining.current !== tradesRemaining) {
+    prevRemaining.current = tradesRemaining
+    setPlayerCardId(null)
+    setFleaIdx(null)
+  }
+
   return (
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
       <div className="bg-ink-900 border-2 border-emerald-500/60 rounded-xl p-6 shadow-2xl max-w-2xl w-full mx-4 space-y-4">
         <div className="text-center">
           <div className="text-lg font-display font-bold text-emerald-300">🎯 Visitor Trade</div>
           <div className="text-sm text-parchment-400 mt-1">
-            A Visitor was just satisfied. Trade 1 from your hoard with the Flea Market.
+            {tradesRemaining > 1
+              ? <><span className="font-semibold text-emerald-200">{tradesRemaining} trades remaining</span> — Visitors satisfied. Trade 1 from your hoard with the Flea Market.</>
+              : 'A Visitor was just satisfied. Trade 1 from your hoard with the Flea Market.'
+            }
           </div>
         </div>
 
@@ -2089,14 +3039,14 @@ function RangerVisitorTradeModal({
 
         <div className="flex gap-3">
           <button
-            onClick={() => onTrade(playerCardId!, fleaIdx!)}
+            onClick={() => { onTrade(playerCardId!, fleaIdx!) }}
             disabled={!canTrade}
             className="btn-primary flex-1 text-sm py-2 disabled:opacity-50"
           >
-            Trade 1
+            Trade {tradesRemaining > 1 ? `(${tradesRemaining} left)` : '1'}
           </button>
           <button onClick={onSkip} className="btn-secondary flex-1 text-sm py-2">
-            Skip
+            {tradesRemaining > 1 ? `Skip all (${tradesRemaining})` : 'Skip'}
           </button>
         </div>
       </div>

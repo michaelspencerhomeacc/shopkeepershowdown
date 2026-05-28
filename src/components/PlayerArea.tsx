@@ -3,7 +3,6 @@ import type { Player, WindowSlot, WindowStatus } from '../types'
 import { useGameStore } from '../store/gameStore'
 import { TokenCounter } from './TokenCounter'
 import { ResourceCardTile, RecipeDisplay } from './ResourceCardTile'
-import { DiceRoller } from './DiceRoller'
 import { CLASSES } from '../data/classes'
 import { CardImage } from './CardImage'
 import { ClassAbilitiesPanel } from './ClassAbilitiesPanel'
@@ -26,9 +25,15 @@ const BREAK_TOKEN = '/cards/tokens/Break_Protect - side two.png'
 interface Props {
   player: Player
   playerIndex: number
+  /** True when this area belongs to the local player. Locks interactions when false. */
+  isOwn?: boolean
+  /** True when it is currently this player's turn. Gates card movement. Defaults true (local play). */
+  isMyTurn?: boolean
 }
 
-export function PlayerArea({ player, playerIndex }: Props) {
+export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true }: Props) {
+  /** Can the player move cards around their shop right now? */
+  const canMove = isOwn && isMyTurn
   const {
     adjustCoins, adjustRep, spendActiveToken, refreshActiveTokens,
     placeInWindow, moveFromWindowToHoard, discardResource,
@@ -37,7 +42,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
     players, currentTurnPlayerId,
   } = useGameStore()
 
-  const [showHoard, setShowHoard] = useState(false)
+  const [showHoard, setShowHoard] = useState(true)
   const [placingCardId, setPlacingCardId] = useState<string | null>(null)
   const [dragOverHoardIdx, setDragOverHoardIdx] = useState<number | null>(null)
 
@@ -74,7 +79,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
   }
 
   return (
-    <div className="panel p-3 space-y-3">
+    <div className={`panel p-3 space-y-3 ${!isOwn ? 'opacity-80' : ''}`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -84,14 +89,19 @@ export function PlayerArea({ player, playerIndex }: Props) {
             <div className="text-sm text-parchment-500">{classInfo?.name ?? player.classId}</div>
           </div>
           {player.hasNightWatcher && (
-            <div className="flex items-center gap-1 ml-1">
-              <img src="/cards/tokens/The Night Watcher.png" alt="Night Watcher" className="w-5 h-5" />
-              <span className="text-sm text-gold-400">Night Watcher</span>
+            <div className="flex items-center gap-1.5 ml-2" title="Night Watcher — blocks the next steal or break against this player">
+              <div className="relative flex-shrink-0">
+                {/* Pulsing outer ring */}
+                <div className="absolute inset-0 rounded-full animate-ping bg-violet-400/40" />
+                <div className="relative w-8 h-8 rounded-full overflow-hidden border-2 border-violet-400 shadow-lg shadow-violet-900/60 bg-ink-900">
+                  <img src="/cards/tokens/The Night Watcher.png" alt="Night Watcher" className="w-full h-full object-cover" />
+                </div>
+              </div>
+              <span className="text-xs font-semibold text-violet-300 tracking-wide">Night Watcher</span>
             </div>
           )}
         </div>
 
-        <DiceRoller playerId={player.id} playerName={player.name} />
       </div>
 
       {/* Coins + Rep */}
@@ -99,8 +109,6 @@ export function PlayerArea({ player, playerIndex }: Props) {
         <TokenCounter
           label="Coins"
           value={player.coins}
-          onIncrement={() => adjustCoins(player.id, 1)}
-          onDecrement={() => adjustCoins(player.id, -1)}
           color="bg-gold-500/20"
           icon="$"
         />
@@ -109,8 +117,6 @@ export function PlayerArea({ player, playerIndex }: Props) {
             key={rt.key}
             label={rt.label}
             value={player.rep[rt.key]}
-            onIncrement={() => adjustRep(player.id, rt.key, 1)}
-            onDecrement={() => adjustRep(player.id, rt.key, -1)}
             color={rt.color}
             textColor={rt.textColor}
             image={rt.image}
@@ -127,26 +133,28 @@ export function PlayerArea({ player, playerIndex }: Props) {
               {Array.from({ length: 2 }, (_, i) => (
                 <div
                   key={i}
-                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all
+                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all
+                    ${isOwn ? 'cursor-pointer' : 'cursor-default'}
                     ${i < player.activeTokens
                       ? 'border-gold-400 bg-gold-400/30'
                       : 'border-parchment-700/40 bg-transparent opacity-40'}`}
-                  onClick={() => i < player.activeTokens
+                  onClick={isOwn ? () => i < player.activeTokens
                     ? spendActiveToken(player.id)
-                    : refreshActiveTokens(player.id)
-                  }
+                    : refreshActiveTokens(player.id) : undefined}
                   title={i < player.activeTokens ? 'Spend token' : 'Refresh tokens'}
                 >
                   {i < player.activeTokens && <div className="w-2 h-2 rounded-full bg-gold-400" />}
                 </div>
               ))}
-              <button
-                onClick={() => refreshActiveTokens(player.id)}
-                className="text-xs text-parchment-500 hover:text-parchment-300 ml-1"
-                title="Refresh all active tokens"
-              >
-                ↺
-              </button>
+              {isOwn && (
+                <button
+                  onClick={() => refreshActiveTokens(player.id)}
+                  className="text-xs text-parchment-500 hover:text-parchment-300 ml-1"
+                  title="Refresh all active tokens"
+                >
+                  ↺
+                </button>
+              )}
             </div>
           </>
         )}
@@ -156,8 +164,8 @@ export function PlayerArea({ player, playerIndex }: Props) {
           <TokenCounter
             label="Debt"
             value={player.debtTokens}
-            onIncrement={() => adjustDebt(player.id, 1)}
-            onDecrement={() => adjustDebt(player.id, -1)}
+            onIncrement={isOwn ? () => adjustDebt(player.id, 1) : undefined}
+            onDecrement={isOwn ? () => adjustDebt(player.id, -1) : undefined}
             color="bg-purple-900/60"
           />
         )}
@@ -165,8 +173,8 @@ export function PlayerArea({ player, playerIndex }: Props) {
           <TokenCounter
             label="Momentum"
             value={player.momentumTokens}
-            onIncrement={() => adjustMomentum(player.id, 1)}
-            onDecrement={() => adjustMomentum(player.id, -1)}
+            onIncrement={isOwn ? () => adjustMomentum(player.id, 1) : undefined}
+            onDecrement={isOwn ? () => adjustMomentum(player.id, -1) : undefined}
             max={8}
             color="bg-blue-900/60"
           />
@@ -187,7 +195,9 @@ export function PlayerArea({ player, playerIndex }: Props) {
               key={win.id}
               slot={win}
               index={i}
-              isTarget={placingCardId !== null}
+              isOwn={isOwn}
+              canMove={canMove}
+              isTarget={canMove && placingCardId !== null}
               onClick={() => handleWindowClick(i)}
               onDrop={(cardId, fromWindowIdx) => handleWindowDrop(i, cardId, fromWindowIdx)}
               onMoveToHoard={() => moveFromWindowToHoard(player.id, i)}
@@ -195,7 +205,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
               onSetStatus={(status) => setWindowStatus(player.id, i, status)}
               onToggleStolen={() => win.card && setWindowStolen(player.id, i, !win.stolen)}
               onRepairForCoins={() => handleRepairForCoins(i)}
-              canRepair={player.coins >= 3}
+              canRepair={canMove && player.coins >= 3}
             />
           ))}
         </div>
@@ -204,54 +214,57 @@ export function PlayerArea({ player, playerIndex }: Props) {
       {/* Hoard */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <button
-            onClick={() => setShowHoard(v => !v)}
-            className="zone-label hover:text-parchment-200 transition-colors"
-          >
-            Hoard ({player.hoard.length}/8) {showHoard ? '▾' : '▸'}
-          </button>
+          {isOwn ? (
+            <button
+              onClick={() => setShowHoard(v => !v)}
+              className="zone-label hover:text-parchment-200 transition-colors"
+            >
+              Hoard ({player.hoard.length}/8) {showHoard ? '▾' : '▸'}
+            </button>
+          ) : (
+            <span className="zone-label">Hoard ({player.hoard.length}/8)</span>
+          )}
         </div>
-        {showHoard && (
+        {(showHoard || !isOwn) && (
           <div
             className="flex flex-wrap gap-2 min-h-[40px] rounded-lg transition-colors"
-            onDragOver={e => {
+            onDragOver={canMove ? e => {
               if (e.dataTransfer.types.includes('application/window-index')) e.preventDefault()
-            }}
-            onDrop={e => {
+            } : undefined}
+            onDrop={canMove ? e => {
               const winIdxStr = e.dataTransfer.getData('application/window-index')
               if (winIdxStr !== '') {
                 e.preventDefault()
                 moveFromWindowToHoard(player.id, parseInt(winIdxStr))
               }
-            }}
+            } : undefined}
           >
             {player.hoard.map((card, idx) => (
               <div
                 key={card.id}
-                onDragOver={e => { e.preventDefault(); setDragOverHoardIdx(idx) }}
-                onDragLeave={() => setDragOverHoardIdx(null)}
-                onDrop={e => {
+                onDragOver={canMove ? e => { e.preventDefault(); setDragOverHoardIdx(idx) } : undefined}
+                onDragLeave={canMove ? () => setDragOverHoardIdx(null) : undefined}
+                onDrop={canMove ? e => {
                   e.preventDefault()
                   setDragOverHoardIdx(null)
                   const winIdxStr = e.dataTransfer.getData('application/window-index')
                   if (winIdxStr !== '') {
-                    // Window card dropped onto hoard → move to hoard
                     moveFromWindowToHoard(player.id, parseInt(winIdxStr))
                     return
                   }
                   const fromIdxStr = e.dataTransfer.getData('application/hoard-index')
                   const fromIdx = fromIdxStr !== '' ? parseInt(fromIdxStr) : -1
                   if (fromIdx >= 0 && fromIdx !== idx) reorderHoard(player.id, fromIdx, idx)
-                }}
+                } : undefined}
                 className={`rounded transition-all ${dragOverHoardIdx === idx ? 'ring-2 ring-gold-400 ring-offset-1 ring-offset-ink-900' : ''}`}
               >
                 <ResourceCardTile
                   card={card}
                   size="sm"
                   stolen={player.stolenHoardCardIds.includes(card.id)}
-                  dragCardId={card.id}
-                  extraDragData={{ 'application/hoard-index': String(idx) }}
-                  actions={
+                  dragCardId={canMove ? card.id : undefined}
+                  extraDragData={canMove ? { 'application/hoard-index': String(idx) } : undefined}
+                  actions={canMove ? (
                     <div className="flex gap-1">
                       <button
                         onClick={() => setPlacingCardId(card.id)}
@@ -267,7 +280,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
                         Discard
                       </button>
                     </div>
-                  }
+                  ) : undefined}
                 />
               </div>
             ))}
@@ -284,7 +297,7 @@ export function PlayerArea({ player, playerIndex }: Props) {
           <span className="zone-label">Workbench</span>
         </div>
 
-        {pendingWorkOrders && (
+        {pendingWorkOrders && canMove && (
           <div className="zone p-2 space-y-2">
             <div className="text-xs text-parchment-400">Choose one Work Order:</div>
             {pendingWorkOrders.map(wo => (
@@ -336,8 +349,10 @@ export function PlayerArea({ player, playerIndex }: Props) {
         </div>
       )}
 
-      {/* Class abilities */}
-      <ClassAbilitiesPanel player={player} isActiveTurn={player.id === currentTurnPlayerId} />
+      {/* Class abilities — blocked for non-owners */}
+      <div className={!isOwn ? 'pointer-events-none select-none opacity-75' : ''}>
+        <ClassAbilitiesPanel player={player} isActiveTurn={player.id === currentTurnPlayerId} isOwn={isOwn} />
+      </div>
     </div>
   )
 }
@@ -345,6 +360,8 @@ export function PlayerArea({ player, playerIndex }: Props) {
 interface WindowSlotProps {
   slot: WindowSlot
   index: number
+  isOwn: boolean
+  canMove: boolean
   isTarget: boolean
   onClick: () => void
   onDrop: (cardId: string, fromWindowIdx: number | null) => void
@@ -357,7 +374,7 @@ interface WindowSlotProps {
 }
 
 function WindowSlotDisplay({
-  slot, index, isTarget, onClick, onDrop,
+  slot, index, isOwn, canMove, isTarget, onClick, onDrop,
   onMoveToHoard, onDiscard, onSetStatus, onToggleStolen,
   onRepairForCoins, canRepair,
 }: WindowSlotProps) {
@@ -370,11 +387,12 @@ function WindowSlotDisplay({
   const [dragOver, setDragOver] = useState(false)
 
   function handleDragOver(e: React.DragEvent) {
-    // Accept any hoard card drop (occupied windows swap the existing card back to hoard)
+    if (!canMove) return
     e.preventDefault(); setDragOver(true)
   }
   function handleDragLeave() { setDragOver(false) }
   function handleDrop(e: React.DragEvent) {
+    if (!canMove) return
     e.preventDefault(); setDragOver(false)
     const cardId = e.dataTransfer.getData('text/plain')
     const winIdxStr = e.dataTransfer.getData('application/window-index')
@@ -385,10 +403,11 @@ function WindowSlotDisplay({
   if (!slot.card) {
     return (
       <div
-        className={`zone w-[100px] h-[140px] flex flex-col items-center justify-center cursor-pointer transition-all
-          ${isTarget || dragOver ? 'border-gold-400/80 bg-gold-400/10' : 'hover:border-parchment-600/60'}
+        className={`zone w-[100px] h-[140px] flex flex-col items-center justify-center transition-all
+          ${canMove ? 'cursor-pointer' : 'cursor-default'}
+          ${isTarget || dragOver ? 'border-gold-400/80 bg-gold-400/10' : canMove ? 'hover:border-parchment-600/60' : ''}
           ${statusOverlay[slot.status]}`}
-        onClick={onClick}
+        onClick={canMove ? onClick : undefined}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -398,14 +417,16 @@ function WindowSlotDisplay({
         {slot.status === 'broken' ? (
           <div className="flex flex-col items-center gap-1 mt-1">
             <img src={BREAK_TOKEN} alt="Broken" className="w-8 h-8 rounded-full border border-red-400/60 shadow-md" />
-            <button
-              onClick={e => { e.stopPropagation(); onRepairForCoins() }}
-              disabled={!canRepair}
-              className="text-xs bg-emerald-900/90 hover:bg-emerald-800 text-emerald-200 font-semibold rounded px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
-              title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
-            >
-              🔧 Fix · 3$
-            </button>
+            {isOwn && (
+              <button
+                onClick={e => { e.stopPropagation(); onRepairForCoins() }}
+                disabled={!canRepair}
+                className="text-xs bg-emerald-900/90 hover:bg-emerald-800 text-emerald-200 font-semibold rounded px-2 py-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={canRepair ? 'Repair for 3 coins' : 'Need 3 coins'}
+              >
+                🔧 Fix · 3$
+              </button>
+            )}
           </div>
         ) : slot.status !== 'normal' ? (
           <span className="text-sm">{STATUS_ICONS[slot.status]}</span>
@@ -426,8 +447,8 @@ function WindowSlotDisplay({
       card={slot.card}
       size="md"
       stolen={slot.stolen}
-      dragCardId={slot.card.id}
-      extraDragData={{ 'application/window-index': String(index) }}
+      dragCardId={isOwn ? slot.card.id : undefined}
+      extraDragData={isOwn ? { 'application/window-index': String(index) } : undefined}
       overlay={
         slot.status === 'broken' ? (
           <div className={`absolute inset-0 ${statusOverlay.broken} rounded-lg pointer-events-none`}>
@@ -442,7 +463,7 @@ function WindowSlotDisplay({
         ) : undefined
       }
       actions={
-        slot.status === 'broken' ? (
+        isOwn && slot.status === 'broken' ? (
           <button
             onClick={e => { e.stopPropagation(); onRepairForCoins() }}
             disabled={!canRepair}

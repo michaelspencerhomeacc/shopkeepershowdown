@@ -84,7 +84,7 @@ interface PlayerDef {
   classId: ClassId
 }
 
-export function Lobby() {
+export function Lobby({ onBack }: { onBack?: () => void }) {
   const { startGame } = useGameStore()
   const [playerCount, setPlayerCount] = useState(2)
   const [selectedClass, setSelectedClass] = useState<ClassCard | null>(null)
@@ -210,13 +210,23 @@ export function Lobby() {
         </div>
 
         {/* Start button */}
-        <button
-          onClick={handleStart}
-          disabled={!canStart}
-          className="btn-primary w-full py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Begin the Showdown
-        </button>
+        <div className="flex gap-3">
+          {onBack && (
+            <button
+              onClick={onBack}
+              className="btn-secondary px-5 py-3 text-sm"
+            >
+              ← Back
+            </button>
+          )}
+          <button
+            onClick={handleStart}
+            disabled={!canStart}
+            className="btn-primary flex-1 py-3 text-base disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Begin the Showdown
+          </button>
+        </div>
       </div>
 
       {/* Class detail modal */}

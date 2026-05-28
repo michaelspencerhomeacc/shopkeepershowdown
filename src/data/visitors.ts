@@ -5,7 +5,7 @@ import type { VisitorCard } from '../types'
 // Icon colours on the cards: orange=ARM, blue=CON, green=TRI, pink=TRG
 export const VISITOR_CARDS: VisitorCard[] = [
   { id: 'v01', name: 'Alianna Lunagrove',   title: 'The Villager',            demand: '3 TRG',               size: 'Small', imageFile: '/cards/visitors/Alianna Lunagrove - Small.png' },
-  { id: 'v02', name: 'Barry Cycez',         title: 'The Collector',           demand: '5 TRI',               size: 'Large', imageFile: '/cards/visitors/Barry Cycez - Large.png' },
+  { id: 'v02', name: 'Barry Cycez',         title: 'The Collector',           demand: '5 ANY',               size: 'Large', imageFile: '/cards/visitors/Barry Cycez - Large.png' },
   { id: 'v03', name: 'Bruceland Whisper',   title: 'The Half-Orc',            demand: '1 ARM, 1 TRI, 1 TRG', size: 'Small', imageFile: '/cards/visitors/Bruceland Whisper - Small.png' },
   { id: 'v04', name: 'Caroline Spender',    title: 'The Profiteer',           demand: '1 ARM, 2 TRG',        size: 'Small', imageFile: '/cards/visitors/Caroline Spender - Small.png' },
   { id: 'v05', name: 'Charley Barkinson',   title: 'The Volunteer',           demand: '3 CON, 1 TRG',        size: 'Small', imageFile: '/cards/visitors/Charley Barkinson - Small.png' },
