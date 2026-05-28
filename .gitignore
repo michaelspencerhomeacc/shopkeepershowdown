@@ -12,6 +12,9 @@ dist/
 # Vite cache
 .vite/
 
+# Claude worktrees — local only, never commit
+.claude/worktrees/
+
 # Editor
 .vscode/
 .idea/
