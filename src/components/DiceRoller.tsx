@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useGameStore } from '../store/gameStore'
-
-const FACES = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
+import { DiceRollModal } from './DiceRollModal'
 
 interface Props {
   playerId: string
@@ -9,18 +8,18 @@ interface Props {
 }
 
 export function DiceRoller({ playerId, playerName }: Props) {
-  const { diceResult, rollDice } = useGameStore()
-  const [rolling, setRolling] = useState(false)
+  const { rollDice } = useGameStore()
+  const [modalResult, setModalResult] = useState<number | null>(null)
 
   function handleRoll() {
-    if (rolling) return
-    setRolling(true)
+    if (modalResult !== null) return
     rollDice(playerId)
-    setTimeout(() => setRolling(false), 600)
+    const result = useGameStore.getState().diceResult
+    if (result !== null) setModalResult(result)
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <>
       <button
         onClick={handleRoll}
         className="btn-primary text-xs px-3 py-1"
@@ -28,14 +27,14 @@ export function DiceRoller({ playerId, playerName }: Props) {
       >
         Roll d6
       </button>
-      {diceResult !== null && (
-        <span
-          className={`text-2xl transition-all duration-300 ${rolling ? 'opacity-0 scale-75' : 'opacity-100 scale-100'}`}
-          title={`Result: ${diceResult}`}
-        >
-          {FACES[diceResult - 1]}
-        </span>
+
+      {modalResult !== null && (
+        <DiceRollModal
+          result={modalResult}
+          title={`${playerName} rolls`}
+          onDismiss={() => setModalResult(null)}
+        />
       )}
-    </div>
+    </>
   )
 }

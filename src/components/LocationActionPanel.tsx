@@ -6,6 +6,7 @@ import { ResourceCardMini } from './ResourceCardMini'
 import { CardPickerGrid } from './CardPickerGrid'
 import { RecipeDisplay } from './ResourceCardTile'
 import { parseRequirements, meetsRequirements, type Requirements } from '../utils/requirements'
+import { DiceRollModal } from './DiceRollModal'
 
 interface Props {
   location: Location
@@ -27,6 +28,23 @@ const LOCATION_LABELS: Record<Location, string> = {
 }
 
 const REP_TYPES: RepType[] = ['ARM', 'CON', 'TRI', 'TRG']
+
+/** Returns Tailwind classes for a rep-type toggle button */
+const REP_BTN_SELECTED: Record<RepType, string> = {
+  ARM: 'bg-orange-700/70 border-orange-400 text-orange-100',
+  CON: 'bg-blue-700/70   border-blue-400   text-blue-100',
+  TRI: 'bg-green-700/70  border-green-400  text-green-100',
+  TRG: 'bg-pink-700/70   border-pink-400   text-pink-100',
+}
+const REP_BTN_IDLE: Record<RepType, string> = {
+  ARM: 'bg-orange-950/50 border-orange-700/40 text-orange-300 hover:border-orange-500/60',
+  CON: 'bg-blue-950/50   border-blue-700/40   text-blue-300   hover:border-blue-500/60',
+  TRI: 'bg-green-950/50  border-green-700/40  text-green-300  hover:border-green-500/60',
+  TRG: 'bg-pink-950/50   border-pink-700/40   text-pink-300   hover:border-pink-500/60',
+}
+function repBtnCls(rt: RepType, selected: boolean) {
+  return `text-xs px-2 py-0.5 rounded border transition-colors ${selected ? REP_BTN_SELECTED[rt] : REP_BTN_IDLE[rt]}`
+}
 
 interface ActionOption {
   id: string
@@ -197,15 +215,19 @@ export function LocationActionPanel({ location, onClose, onAction, onConsumeActi
 
 // ---- Draw animation toast ----
 
-export function DrawnCardsToast() {
-  const { lastDrawnCards, clearDrawnCards } = useGameStore()
+export function DrawnCardsToast({ localPlayerId }: { localPlayerId?: string | null }) {
+  const { lastDrawnCards, clearDrawnCards, currentTurnPlayerId } = useGameStore()
   // null = nothing to show; [] = passive fired but drew 0 cards; non-empty = cards to display
   const [cards, setCards] = useState<ResourceCard[] | null>(null)
 
   useEffect(() => {
     if (lastDrawnCards === null) return  // explicitly cleared — don't show
+    // In multiplayer: only show this toast to the player who actually drew the cards.
+    // The active player's LocationActionPanel already handles its own display; this
+    // toast is the fallback for passive/bonus draws.  Other clients should never see it.
+    if (localPlayerId && currentTurnPlayerId !== localPlayerId) return
     setCards(lastDrawnCards)
-  }, [lastDrawnCards])
+  }, [lastDrawnCards, localPlayerId, currentTurnPlayerId])
 
   if (cards === null) return null
 
@@ -394,11 +416,7 @@ function GuildhallActions({ actionId, onAction, onBack, onClose }: { actionId: s
               key={rt}
               type="button"
               onClick={() => setConsultRep(rt)}
-              className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                consultRep === rt
-                  ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                  : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-500'
-              }`}
+              className={repBtnCls(rt, consultRep === rt)}
             >
               {rt}
             </button>
@@ -490,11 +508,7 @@ function GuildhallActions({ actionId, onAction, onBack, onClose }: { actionId: s
                         key={rt}
                         type="button"
                         onClick={() => setNegRepType(rt)}
-                        className={`text-[9px] px-1.5 py-0.5 rounded border transition-colors ${
-                          negRepType === rt
-                            ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                            : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
-                        }`}
+                        className={repBtnCls(rt, negRepType === rt)}
                       >
                         {rt}
                       </button>
@@ -539,14 +553,7 @@ function ProfessionalUI({ profId, player, onDone }: { profId: string; player: Pl
     case 'p02': return <BrazenBountyHunterUI player={player} onDone={onDone} />
     case 'p03': return <CharismaticClerkUI player={player} onDone={onDone} />
     case 'p04': return <PolitePromoterUI player={player} onDone={onDone} />
-    case 'p05': return (
-      <div className="space-y-1">
-        <div className="text-[10px] text-parchment-400">Roll d6, draw floor(roll/2) resources. Gain 1 rep per distinct type drawn.</div>
-        <button type="button" onClick={() => { store.marvellousMAscot(player.id); onDone() }} className="btn-primary text-xs px-2 py-0.5">
-          Roll &amp; Gather
-        </button>
-      </div>
-    )
+    case 'p05': return <MascotUI player={player} onDone={onDone} />
     case 'p06': {
       const totalSpent = store.players.reduce((sum, p) => sum + (2 - p.activeTokens), 0)
       const launderCount = Math.min(4, totalSpent)
@@ -578,6 +585,54 @@ function ProfessionalUI({ profId, player, onDone }: { profId: string; player: Pl
     case 'p09': return <AppraisePeekUI player={player} onDone={onDone} />
     default: return null
   }
+}
+
+function MascotUI({ player, onDone }: { player: Player; onDone: () => void }) {
+  const { marvellousMAscot } = useGameStore()
+  const [pendingRoll, setPendingRoll] = useState<{ roll: number; cards: ResourceCard[] } | null>(null)
+
+  return (
+    <div className="space-y-1">
+      <div className="text-[10px] text-parchment-400">Roll d6, draw floor(roll/2) resources. Gain 1 rep per distinct type drawn.</div>
+      <button
+        type="button"
+        onClick={() => {
+          marvellousMAscot(player.id)
+          const store = useGameStore.getState()
+          // If a SharedBoard overlay will take over, close now and let it handle the roll.
+          if (store.trickShotPending !== null || store.rn04RerollPending !== null) {
+            onDone()
+            return
+          }
+          const roll = store.diceResult
+          const cards = store.lastDrawnCards ?? []
+          // Suppress DrawnCardsToast now (same event-handler batch) — dice modal shows first.
+          store.clearDrawnCards()
+          if (roll !== null) {
+            setPendingRoll({ roll, cards })
+          } else {
+            onDone()
+          }
+        }}
+        className="btn-primary text-xs px-2 py-0.5"
+      >
+        Roll &amp; Gather
+      </button>
+      {pendingRoll !== null && (
+        <DiceRollModal
+          result={pendingRoll.roll}
+          title="Marvellous Mascot"
+          onDismiss={() => {
+            const { cards } = pendingRoll
+            setPendingRoll(null)
+            // Re-trigger DrawnCardsToast now that the dice modal is gone.
+            if (cards.length > 0) useGameStore.getState().revealDrawnCards(cards)
+            onDone()
+          }}
+        />
+      )}
+    </div>
+  )
 }
 
 function AlluringAlchemistUI({ player, onDone }: { player: Player; onDone: () => void }) {
@@ -883,6 +938,7 @@ function TavernActions({ actionId, onAction, onBack }: { actionId: string; onAct
   const [auctionCardId, setAuctionCardId] = useState('')
   const [auctionZone, setAuctionZone] = useState<'hoard' | 'window'>('hoard')
   const [auctionWinIdx, setAuctionWinIdx] = useState(0)
+  const [pendingAuctionRoll, setPendingAuctionRoll] = useState<number | null>(null)
 
   const [selectedHoardIds, setSelectedHoardIds] = useState<string[]>([])
   const [selectedFleaIdxs, setSelectedFleaIdxs] = useState<number[]>([])
@@ -972,13 +1028,33 @@ function TavernActions({ actionId, onAction, onBack }: { actionId: string; onAct
             if (!cid) return
             auction(player.id, cid, auctionZone, auctionZone === 'window' ? auctionWinIdx : undefined)
             setAuctionCardId('')
-            onAction()
+            const store = useGameStore.getState()
+            // If a SharedBoard overlay (z-320+) will take over, close the panel immediately —
+            // the overlay already displays the original roll; showing a dice modal inside
+            // the z-50 LocationActionPanel stacking context would be hidden behind it.
+            if (store.trickShotPending !== null || store.rn04RerollPending !== null) {
+              onAction()
+              return
+            }
+            const roll = store.diceResult
+            if (roll !== null) {
+              setPendingAuctionRoll(roll)
+            } else {
+              onAction()
+            }
           }}
           disabled={auctionZone === 'hoard' ? !auctionCardId : !player.windows[auctionWinIdx]?.card}
           className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
         >
           Roll &amp; Sell
         </button>
+      {pendingAuctionRoll !== null && (
+        <DiceRollModal
+          result={pendingAuctionRoll}
+          title="Auction Roll"
+          onDismiss={() => { setPendingAuctionRoll(null); onAction() }}
+        />
+      )}
       </div>
     )
   }
@@ -1190,10 +1266,19 @@ function GatherActionUI({ player, onBack, onConsumeAction, onClose }: {
   const [drawnCards, setDrawnCards] = useState<ResourceCard[] | null>(null)
   // True when gather() returned early because a Trick Shot or rn04 reroll is pending
   const [waitingForResolve, setWaitingForResolve] = useState(false)
+  // Dice roll modal: show the roll then reveal cards (only used on the normal non-pending path)
+  const [pendingRoll, setPendingRoll] = useState<{ roll: number; cards: ResourceCard[] } | null>(null)
 
   // When waiting, use a synchronous Zustand subscribe (fires before React re-renders)
   // to intercept lastDrawnCards the moment it's set — clearing it before DrawnCardsToast
   // ever sees the non-null value.
+  //
+  // clearDrawnCards() stays synchronous (toast suppression).  onConsumeAction() is
+  // deferred to a setTimeout(0) so it fires AFTER applyRemoteState's isApplyingBase
+  // resets but BEFORE isSyncingRef clears.  Without this deferral the nested setState
+  // calls inside useTurnAction (ambushPending, movePawn, etc.) would execute while
+  // isApplyingBase=true, leaving pendingLocalPushRef=false and silently dropping those
+  // mutations — the other client never learns about ambushPending.
   useEffect(() => {
     if (!waitingForResolve) return
     const unsub = useGameStore.subscribe((state, prev) => {
@@ -1201,9 +1286,11 @@ function GatherActionUI({ player, onBack, onConsumeAction, onClose }: {
       const cards = state.lastDrawnCards
       unsub()
       useGameStore.getState().clearDrawnCards() // synchronous — toast never sees the value
-      onConsumeAction()
-      setWaitingForResolve(false)
-      setDrawnCards(cards)
+      setTimeout(() => {
+        onConsumeAction()
+        setWaitingForResolve(false)
+        setDrawnCards(cards)
+      }, 0)
     })
     return unsub
   }, [waitingForResolve]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1252,21 +1339,36 @@ function GatherActionUI({ player, onBack, onConsumeAction, onClose }: {
       <IrreversibleWarning />
       <div className="flex gap-2 pt-1">
         <button type="button" onClick={onBack} className="btn-secondary text-xs px-3 py-1.5">← Back</button>
+        {pendingRoll !== null && (
+          <DiceRollModal
+            result={pendingRoll.roll}
+            title="Gathering Resources"
+            onDismiss={() => {
+              const p = pendingRoll
+              setPendingRoll(null)
+              onConsumeAction()
+              setDrawnCards(p.cards)
+            }}
+          />
+        )}
         <button
           type="button"
           onClick={() => {
             gather(player.id)
             const store = useGameStore.getState()
+            const roll = store.diceResult ?? 1
             if (store.lastDrawnCards === null) {
-              // Trick Shot or rn04 reroll is pending — wait for the overlay to resolve it
+              // Trick Shot or rn04 reroll pending — go straight to waiting;
+              // the SharedBoard overlays show the original roll and handle resolution.
+              // We CANNOT show a DiceRollModal here because it lives inside the z-50
+              // LocationActionPanel stacking context and would be buried under z-320+ overlays.
               setWaitingForResolve(true)
               return
             }
-            // Normal path: cards drawn immediately
+            // Normal path: cards drawn immediately, show roll then reveal them
             const cards = store.lastDrawnCards
             store.clearDrawnCards() // suppress DrawnCardsToast
-            onConsumeAction()
-            setDrawnCards(cards)
+            setPendingRoll({ roll, cards })
           }}
           className="btn-primary text-xs px-4 py-1.5"
         >
@@ -1287,6 +1389,7 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
 
   const [reportRep, setReportRep] = useState<RepType>('ARM')
+  const [repairRepType, setRepairRepType] = useState<RepType>('ARM')
   const [reportTarget, setReportTarget] = useState(players.filter(p => p.id !== activePlayerId)[0]?.id ?? '')
   const [reportCard, setReportCard] = useState('')
 
@@ -1303,27 +1406,35 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
     return (
       <div className="space-y-1">
         <BackButton onBack={onBack} />
-        <button
-          type="button"
-          onClick={() => { repairAllWindows(player.id); onAction() }}
-          className="btn-secondary text-xs px-2 py-0.5"
-        >
-          <Keyword name="Repair">Repair</Keyword> All Windows
-        </button>
+
+        {/* Repair All Windows — with rep type selection */}
+        <div className="space-y-1 pb-1">
+          <div className="text-[10px] text-parchment-500">Repair + Gain Rep:</div>
+          <div className="flex flex-wrap gap-1">
+            {REP_TYPES.map(rt => (
+              <button key={rt} type="button" onClick={() => setRepairRepType(rt)}
+                className={repBtnCls(rt, repairRepType === rt)}
+              >{rt}</button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => { repairAllWindows(player.id, repairRepType); onAction() }}
+            className="btn-secondary text-xs px-2 py-0.5"
+          >
+            <Keyword name="Repair">Repair</Keyword> All Windows → +1 {repairRepType}
+          </button>
+        </div>
 
         <div className="border-t border-parchment-800/30 pt-1 space-y-1">
-          <div className="text-[10px] text-parchment-500">Report + Gain Rep:</div>
+          <div className="text-[10px] text-parchment-500">Report theft + Gain Rep:</div>
           <div className="flex flex-wrap gap-1">
             {REP_TYPES.map(rt => (
               <button
                 key={rt}
                 type="button"
                 onClick={() => setReportRep(rt)}
-                className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                  reportRep === rt
-                    ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400'
-                }`}
+                className={repBtnCls(rt, reportRep === rt)}
               >
                 {rt}
               </button>
@@ -1761,24 +1872,30 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
 
         <div className="space-y-1">
           <div className="flex flex-wrap gap-1">
-            {otherPlayers.map(p => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => {
-                  setTargetId(p.id)
-                  const t = players.find(q => q.id === p.id)
-                  setBreakWinIdx(t?.windows.findIndex(w => w.status !== 'shuttered') ?? 0)
-                }}
-                className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                  targetId === p.id
-                    ? 'bg-gold-500/30 border-gold-400 text-gold-200'
-                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                }`}
-              >
-                {p.name}{p.hasNightWatcher ? ' 🌙' : ''}
-              </button>
-            ))}
+            {otherPlayers.map(p => {
+              const emptyHoard = stealBreakMode === 'steal' && p.hoard.length === 0
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    if (emptyHoard) return
+                    setTargetId(p.id)
+                    const t = players.find(q => q.id === p.id)
+                    setBreakWinIdx(t?.windows.findIndex(w => w.status !== 'shuttered') ?? 0)
+                  }}
+                  className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                    emptyHoard
+                      ? 'opacity-40 cursor-not-allowed bg-ink-800 border-parchment-800/20 text-parchment-600'
+                      : targetId === p.id
+                        ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                        : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
+                  }`}
+                >
+                  {p.name}{p.hasNightWatcher ? ' 🌙' : ''}{emptyHoard ? ' (empty)' : ''}
+                </button>
+              )
+            })}
           </div>
 
           {stealBreakMode === 'break' && targetPlayer && (
@@ -1809,6 +1926,9 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
             </>
           )}
 
+          {stealBreakMode === 'steal' && targetPlayer && targetPlayer.hoard.length === 0 && (
+            <div className="text-[10px] text-red-400 italic">Target has no hoard cards to steal</div>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -1820,7 +1940,11 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
               }
               onAction()
             }}
-            disabled={!targetId || (stealBreakMode === 'break' && !!targetPlayer?.windows.every(w => w.status === 'shuttered'))}
+            disabled={
+              !targetId ||
+              (stealBreakMode === 'steal' && (targetPlayer?.hoard.length ?? 0) === 0) ||
+              (stealBreakMode === 'break' && !!targetPlayer?.windows.every(w => w.status === 'shuttered'))
+            }
             className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
           >
             {stealBreakMode === 'steal' ? 'Steal Random Card' : `Break Window ${breakWinIdx + 1}`}

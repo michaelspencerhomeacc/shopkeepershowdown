@@ -72,6 +72,60 @@
   }
 }
 
+/* Window-break shatter overlay */
+@keyframes shatter-flash {
+  0%   { opacity: 0; }
+  5%   { opacity: 1; }
+  35%  { opacity: 0.85; }
+  70%  { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+.shatter-overlay {
+  background:
+    radial-gradient(ellipse at 15% 15%, rgba(220,38,38,0.55) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 15%, rgba(220,38,38,0.45) 0%, transparent 45%),
+    radial-gradient(ellipse at 50% 90%, rgba(220,38,38,0.5)  0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, transparent 15%, rgba(140,10,10,0.5) 100%);
+  animation: shatter-flash 2.8s ease-out forwards;
+}
+
+/* Steal toast slide-in */
+@keyframes steal-toast-anim {
+  0%   { opacity: 0; transform: translateY(-10px); }
+  12%  { opacity: 1; transform: translateY(0); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.steal-toast {
+  animation: steal-toast-anim 4s ease-out forwards;
+}
+
+/* Steal hand swoops in from the right, settles, then fades */
+@keyframes steal-hand-anim {
+  0%   { opacity: 0; transform: translate(140%, -30%) rotate(-25deg) scale(1.4); }
+  20%  { opacity: 1; transform: translate(0%,  0%)   rotate(0deg)   scale(1);   }
+  70%  { opacity: 1; transform: translate(0%,  0%)   rotate(0deg)   scale(1);   }
+  100% { opacity: 0; transform: translate(0%,  0%)   rotate(0deg)   scale(0.9); }
+}
+
+.steal-hand {
+  animation: steal-hand-anim 4s ease-out forwards;
+}
+
+/* Bottom-left activity feed slide-in */
+@keyframes activity-slide-in {
+  0%   { opacity: 0; transform: translateX(-14px); }
+  12%  { opacity: 1; transform: translateX(0); }
+  72%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.activity-item {
+  animation: activity-slide-in 3.8s ease-out forwards;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

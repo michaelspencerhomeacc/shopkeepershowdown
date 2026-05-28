@@ -68,8 +68,21 @@ function makePlayer(id: string, name: string, classId: ClassId): Player {
   }
 }
 
+/** crypto.randomUUID() requires a secure context (HTTPS / localhost).
+ *  This fallback works over plain HTTP so LAN players on non-localhost origins can act. */
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // RFC-4122 v4 fallback using Math.random
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
+
 function logEntry(message: string, playerId?: string): LogEntry {
-  return { id: crypto.randomUUID(), timestamp: Date.now(), message, playerId }
+  return { id: uuid(), timestamp: Date.now(), message, playerId }
 }
 
 // Draw up to `count` cards, reshuffling discard mid-loop as needed
@@ -113,8 +126,9 @@ function buildInitialGameState(players: Player[]): GameState {
     }))
   })
 
-  // Night watcher starts with player 0
-  if (players.length > 0) players[0].hasNightWatcher = true
+  // Night Watcher starts unassigned.  It moves automatically to whoever was
+  // most recently stolen from or had a window broken — protecting them from the
+  // next attempt.  Nobody holds it at game start.
 
   const visitorDemandRemaining: Record<string, { ARM: number; CON: number; TRI: number; TRG: number }> = {}
   for (const v of activeVisitors) {
@@ -149,11 +163,20 @@ function buildInitialGameState(players: Player[]): GameState {
     righteousDuelPending: null,
     righteousDuelResult: null,
     negotiatePending: null,
+    negotiateReview: null,
     negotiatesCompletedThisTurn: 0,
     politePromoterResetUsed: false,
     shamanCallLightning: null,
     bonusActionsThisTurn: 0,
     endgame: null,
+    rn04RerollPending: null,
+    ambushPending: null,
+    trickShotPending: null,
+    trickShotBonusPending: null,
+    rangerVisitorTradePending: null,
+    nightWatcherChoicePending: null,
+    trickShotForcedRoll: null,
+    rn04ForcedRoll: null,
   }
 }
 
@@ -192,6 +215,8 @@ interface GameStore extends GameState {
   adjustDebt: (playerId: string, delta: number) => void
   adjustMomentum: (playerId: string, delta: number) => void
   transferNightWatcher: (fromId: string, toId: string) => void
+  /** Called after a multi-target break/steal when the attacker chooses who gets the Night Watcher */
+  assignNightWatcher: (recipientId: string) => void
 
   // Location pawns
   movePawn: (playerId: string, location: Location | null) => void
@@ -222,7 +247,7 @@ interface GameStore extends GameState {
   launder: (playerId: string) => void
   consultation: (playerId: string, repType: RepType) => void
   hireBodyguard: (playerId: string) => void
-  repairAllWindows: (playerId: string) => void
+  repairAllWindows: (playerId: string, repType?: import('../types').RepType) => void
   reportCrimeB: (byPlayerId: string, targetPlayerId: string, stolenCardId: string, repType: RepType) => void
   completeCraft: (playerId: string, cardIds: string[]) => void
   pitchCamp: (playerId: string) => void
@@ -245,6 +270,8 @@ interface GameStore extends GameState {
   bountyHunterResource: (byPlayerId: string, fromPlayerId: string, cardId: string) => void
   distribute: (byPlayerId: string, fleaSlotIdx: number) => void
   clearDrawnCards: () => void
+  /** Re-surface lastDrawnCards so DrawnCardsToast fires (e.g. after a dice modal has been dismissed) */
+  revealDrawnCards: (cards: ResourceCard[]) => void
 
   // Sell phase
   sellPhaseAssign: (playerId: string, assignments: { visitorIdx: number; windowIdx: number }[]) => void
@@ -253,6 +280,7 @@ interface GameStore extends GameState {
   // Barbarian class abilities
   recklessSwing: (byPlayerId: string, targetPlayerId: string, windowIndices: number[]) => void
   raidingParty: (playerId: string, clanLoc: Location) => void
+  submitBarbarianClashChoice: (playerId: string, cardIds: string[]) => void
   resolveBarbarianClashOptOut: (choices: Record<string, string[]>) => void
 
   // Shaman class abilities
@@ -267,8 +295,10 @@ interface GameStore extends GameState {
   // Paladin class abilities
   /** Propose a card swap with another player; no action consumed until they accept */
   proposeNegotiate: (proposerId: string, targetId: string, offeredCardId: string, paladinRepType?: RepType) => void
-  /** Target accepts (counterCardId required) or declines; action consumed only on accept */
-  resolveNegotiate: (accept: boolean, counterCardId?: string) => void
+  /** Target submits their counter-card, moving to review stage */
+  counterNegotiate: (counterCardId: string) => void
+  /** Proposer accepts or declines after reviewing target's counter-card */
+  resolveNegotiate: (accept: boolean) => void
   /** Paladin chooses their own stake and issues the challenge */
   initiateRighteousDuel: (challengerId: string, targetId: string, challengerStake: import('../types').DuelStake) => void
   /** Target accepts (passing their own stake) or declines (passing card ID to discard, or undefined = pay 2 coins) */
@@ -307,10 +337,16 @@ interface GameStore extends GameState {
   /** Ranger completes a Trade 1 from their Visitor Trade passive */
   resolveRangerVisitorTrade: (playerCardId: string, fleaSlotIdx: number) => void
 
+  /** Dismiss the broadcast Trick Shot forced-roll animation */
+  dismissTrickShotForcedRoll: () => void
+  /** Dismiss the broadcast rn04 forced-roll animation */
+  dismissRn04ForcedRoll: () => void
+
   // Turn management
   useTurnAction: (location: Location) => void
   endTurn: () => void
   dismissClash: () => void
+  acknowledgeClash: (playerId: string | null) => void
   _advanceTurn: () => void
   advanceFinalSell: () => void
 }
@@ -330,6 +366,7 @@ const INITIAL: GameState = {
   professionalSlots: [],
   workOrderDeck: [],
   actionLog: [],
+  lastGuildFenceType: null,
   diceResult: null,
   townCrierPeek: null,
   appraisePeek: null,
@@ -353,6 +390,9 @@ const INITIAL: GameState = {
   trickShotPending: null,
   trickShotBonusPending: null,
   rangerVisitorTradePending: null,
+  nightWatcherChoicePending: null,
+  trickShotForcedRoll: null,
+  rn04ForcedRoll: null,
 }
 
 // Shared helper: execute the underlying action (gather/auction/mascot) with a given final roll.
@@ -836,6 +876,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }))
   },
 
+  assignNightWatcher(recipientId) {
+    const { nightWatcherChoicePending, players } = get()
+    if (!nightWatcherChoicePending) return
+    if (!nightWatcherChoicePending.candidateIds.includes(recipientId)) return
+    const recipient = players.find(p => p.id === recipientId)
+    if (!recipient) return
+    set(s => ({
+      nightWatcherChoicePending: null,
+      players: s.players.map(p => ({ ...p, hasNightWatcher: p.id === recipientId })),
+      actionLog: [logEntry(`${recipient.name} receives the Night Watcher.`, nightWatcherChoicePending.attackerId), ...s.actionLog.slice(0, 49)],
+    }))
+  },
+
   movePawn(playerId, location) {
     const { players } = get()
     const player = players.find(p => p.id === playerId)
@@ -963,6 +1016,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (rollType === 'generic') {
       set(s => ({
         diceResult: finalRoll,
+        rn04ForcedRoll: useIt ? { roll: finalRoll, playerId } : null,
         rn04RerollPending: null,
         players: useIt ? s.players.map(p => p.id === playerId ? { ...p, rn04RerollUsed: true } : p) : s.players,
         actionLog: useIt
@@ -978,6 +1032,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         resourceDeck: deck,
         resourceDiscard: discard,
         diceResult: finalRoll,
+        rn04ForcedRoll: useIt ? { roll: finalRoll, playerId } : null,
         rn04RerollPending: null,
         lastDrawnCards: drawn,
         players: s.players.map(p => {
@@ -1002,6 +1057,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
       set(s => ({
         diceResult: finalRoll,
+        rn04ForcedRoll: useIt ? { roll: finalRoll, playerId } : null,
         rn04RerollPending: null,
         resourceDiscard: [card, ...s.resourceDiscard],
         players: s.players.map(p => {
@@ -1034,6 +1090,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set(s => ({
         resourceDeck: deck,
         diceResult: finalRoll,
+        rn04ForcedRoll: useIt ? { roll: finalRoll, playerId } : null,
         rn04RerollPending: null,
         lastDrawnCards: drawn,
         players: s.players.map(p => {
@@ -1304,7 +1361,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const attacker = players.find(p => p.id === byPlayerId)
     if (!target || !attacker) return
     if (target.hasNightWatcher) {
-      console.error('steal: target has Night Watcher — blocked')
       set(s => ({
         actionLog: [logEntry(`${attacker.name} tried to steal from ${target.name} but Night Watcher blocked it!`, byPlayerId), ...s.actionLog.slice(0, 49)],
       }))
@@ -1326,6 +1382,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             hoard: p.hoard.filter(c => c.id !== stolenCard.id),
             stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== stolenCard.id),
             coins: p.coins + rn09Bonus,
+            hasNightWatcher: players.length > 2,
           }
         }
         if (p.id === byPlayerId) {
@@ -1333,12 +1390,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
             ...p,
             hoard: [...p.hoard, stolenCard],
             stolenHoardCardIds: [...p.stolenHoardCardIds, stolenCard.id],
+            hasNightWatcher: false,
           }
         }
-        return p
+        return { ...p, hasNightWatcher: false }
       }),
       actionLog: [logEntry(
         `${attacker.name} stole ${stolenCard.name} from ${target.name}!` +
+        (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : '') +
         (rn09Bonus > 0 ? ` ${target.name}'s Shadow of Vel'sha — gained 2 coins.` : ''),
         byPlayerId
       ), ...s.actionLog.slice(0, 49)],
@@ -1351,6 +1410,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const target = players.find(p => p.id === targetPlayerId)
     if (!attacker || !target) return
 
+    if (target.hasNightWatcher) {
+      set(s => ({
+        actionLog: [logEntry(`${attacker.name} tried to break ${target.name}'s window but the Night Watcher blocked it!`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      }))
+      return
+    }
+
     const win = target.windows[windowIdx]
     if (win?.status === 'shuttered') {
       set(s => ({
@@ -1362,10 +1428,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set(s => ({
       players: s.players.map(p =>
         p.id === targetPlayerId
-          ? { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' } : w) }
-          : p
+          ? { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' } : w), hasNightWatcher: players.length > 2 }
+          : { ...p, hasNightWatcher: false }
       ),
-      actionLog: [logEntry(`${attacker.name} broke ${target.name}'s window ${windowIdx + 1}!`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${attacker.name} broke ${target.name}'s window ${windowIdx + 1}!${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}`, byPlayerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -1413,6 +1479,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       }),
       resourceDiscard: [card, ...s.resourceDiscard],
+      lastGuildFenceType: card.type,
       actionLog: [logEntry(`${player.name} fenced ${card.name} for ${card.value} coins.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
@@ -1496,35 +1563,39 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ? { ...p, coins: p.coins - 2, hasNightWatcher: true }
           : { ...p, hasNightWatcher: false }
       ),
-      actionLog: [logEntry(`${player.name} hired the Bodyguard — paid 2 coins, now holds Night Watcher.`, playerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${player.name} hired the Bodyguard — paid 2 coins, now holds the Night Watcher.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
-  repairAllWindows(playerId) {
+  repairAllWindows(playerId, repType) {
     const { players, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
+    const brokenCount = player.windows.filter(w => w.status === 'broken').length
     // Gates of Mirhollow (rn03): +1 CON Rep per window actually repaired
     const rn03 = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn03')
-    const brokenCount = rn03 ? player.windows.filter(w => w.status === 'broken').length : 0
-    // Mercy of Thornwall (rn05): Draw 1 (once per repair action, not per window)
+    // Mercy of Thornwall (rn05): Draw 1 per window repaired
     const rn05 = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn05')
-    const draw = rn05 ? drawCards(resourceDeck, resourceDiscard, 1, 0, Infinity) : null
+    const draw = rn05 && brokenCount > 0 ? drawCards(resourceDeck, resourceDiscard, brokenCount, 0, Infinity) : null
 
     set(s => ({
       players: s.players.map(p => {
         if (p.id !== playerId) return p
         const withWindows = { ...p, windows: p.windows.map(w => ({ ...w, status: 'normal' as WindowStatus })) }
-        const withRep = rn03 && brokenCount > 0 ? { ...withWindows, rep: { ...withWindows.rep, CON: withWindows.rep.CON + brokenCount } } : withWindows
-        const withDraw = draw ? { ...withRep, hoard: [...withRep.hoard, ...draw.drawn] } : withRep
+        // +1 rep of chosen type from the Barracks repair action itself
+        const withRepType = repType ? { ...withWindows, rep: { ...withWindows.rep, [repType]: withWindows.rep[repType] + 1 } } : withWindows
+        // rn03: additional CON rep per window repaired
+        const withRn03 = rn03 && brokenCount > 0 ? { ...withRepType, rep: { ...withRepType.rep, CON: withRepType.rep.CON + brokenCount } } : withRepType
+        const withDraw = draw ? { ...withRn03, hoard: [...withRn03.hoard, ...draw.drawn] } : withRn03
         return withDraw
       }),
       resourceDeck: draw ? draw.deck : s.resourceDeck,
       resourceDiscard: draw ? draw.discard : s.resourceDiscard,
       actionLog: [logEntry(
         `${player.name} repaired all windows.` +
+        (repType && brokenCount > 0 ? ` Gained 1 ${repType} rep.` : '') +
         (rn03 && brokenCount > 0 ? ` Gates of Mirhollow — +${brokenCount} CON Rep.` : '') +
-        (draw && draw.drawn.length > 0 ? ` Mercy of Thornwall — drew ${draw.drawn[0].name}.` : ''),
+        (draw && draw.drawn.length > 0 ? ` Mercy of Thornwall — drew ${draw.drawn.map(c => c.name).join(', ')}.` : ''),
         playerId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -1578,7 +1649,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const fromHoard = player.hoard.filter(c => cardIdSet.has(c.id))
     const fromWindows = player.windows.flatMap(w => (w.card && cardIdSet.has(w.card.id) ? [w.card] : []))
     const spentCards = [...fromHoard, ...fromWindows]
-    const gained = player.workOrder.price
+    const baseGain = player.workOrder.price
+    // Forge of Ironpeak (rn02) passive: +3 bonus coins on craft completion
+    const rn02Bonus = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn02') ? 3 : 0
+    const gained = baseGain + rn02Bonus
 
     const discountUsed = player.craftDiscount > 0
 
@@ -1600,7 +1674,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           : p
       ),
       actionLog: [logEntry(
-        `${player.name} completed Work Order "${player.workOrder!.name}" — spent ${spentCards.length} cards, gained ${gained} coins.${discountUsed ? ' (Forge of Ironpeak discount applied)' : ''}`,
+        `${player.name} completed Work Order "${player.workOrder!.name}" — spent ${spentCards.length} cards, gained ${gained} coins.` +
+        (discountUsed ? ' (Forge of Ironpeak discount applied)' : '') +
+        (rn02Bonus > 0 ? ` ◆ Forge of Ironpeak — +${rn02Bonus} bonus coins.` : ''),
         playerId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -1820,6 +1896,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const attacker = players.find(p => p.id === byPlayerId)
     const target = players.find(p => p.id === targetPlayerId)
     if (!attacker || !target) return
+    if (target.hasNightWatcher) {
+      set(s => ({
+        actionLog: [logEntry(`${attacker.name} tried Shady Saboteur on ${target.name} but Night Watcher blocked it!`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      }))
+      return
+    }
     const win = target.windows[windowIdx]
     if (!win?.card) return
     const coinGain = Math.floor(win.card.value / 2)
@@ -1827,10 +1909,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set(s => ({
       players: s.players.map(p => {
         if (p.id === byPlayerId) return { ...p, coins: p.coins + coinGain }
-        if (p.id === targetPlayerId) return { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' as WindowStatus } : w) }
-        return p
+        if (p.id === targetPlayerId) return { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' as WindowStatus } : w), hasNightWatcher: players.length > 2 }
+        return { ...p, hasNightWatcher: false }
       }),
-      actionLog: [logEntry(`${attacker.name} used Shady Saboteur on ${target.name}'s window ${windowIdx + 1} (${cardName}) — broke it, gained ${coinGain} coins.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${attacker.name} used Shady Saboteur on ${target.name}'s window ${windowIdx + 1} (${cardName}) — broke it, gained ${coinGain} coins.${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}`, byPlayerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -1929,18 +2011,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!card) return
     const player = players.find(p => p.id === byPlayerId)
     if (!player) return
+    const repGained = card.repTokens > 0 ? card.repTokens : 1
     set(s => ({
       fleaMarket: s.fleaMarket.map((c, i) => i === fleaSlotIdx ? null : c),
       resourceDiscard: [card, ...s.resourceDiscard],
       players: s.players.map(p =>
-        p.id === byPlayerId ? { ...p, rep: { ...p.rep, [card.type]: p.rep[card.type] + 1 } } : p
+        p.id === byPlayerId ? { ...p, rep: { ...p.rep, [card.type]: p.rep[card.type] + repGained } } : p
       ),
-      actionLog: [logEntry(`${player.name} distributed ${card.name} (${card.type}) to a Visitor — gained 1 ${card.type} rep.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${player.name} distributed ${card.name} (${card.type}) to a Visitor — gained ${repGained} ${card.type} rep.`, byPlayerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
   clearDrawnCards() {
     set({ lastDrawnCards: null })
+  },
+
+  revealDrawnCards(cards) {
+    set({ lastDrawnCards: cards })
   },
 
   completeSellPhase() {
@@ -1951,20 +2038,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const ranger = players.find(p => p.id === currentTurnPlayerId)
     if (ranger?.classId === 'ranger') {
       const roll = Math.ceil(Math.random() * 6)
-      const count = Math.floor(roll / 2)
+      const count = Math.max(1, Math.floor(roll / 2))
       const st = get()
       const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
       set(s => ({
         resourceDeck: deck,
         resourceDiscard: discard,
-        lastDrawnCards: drawn,  // always set (even []) so DrawnCardsToast fires
+        diceResult: roll,         // stored so the UI can show the animated roll
+        lastDrawnCards: drawn,    // always set (even []) so DrawnCardsToast fires
         players: drawn.length > 0
           ? s.players.map(p => p.id !== currentTurnPlayerId ? p : { ...p, hoard: [...p.hoard, ...drawn] })
           : s.players,
         actionLog: [logEntry(
           drawn.length > 0
             ? `${ranger.name}'s Master of the Wilderness — rolled ${roll}, drew ${drawn.length} resource${drawn.length !== 1 ? 's' : ''} free.`
-            : `${ranger.name}'s Master of the Wilderness — rolled ${roll} (0 free resources).`,
+            : `${ranger.name}'s Master of the Wilderness — rolled ${roll} (deck empty, 0 drawn).`,
           currentTurnPlayerId
         ), ...s.actionLog.slice(0, 49)],
       }))
@@ -1972,8 +2060,32 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   useTurnAction(location) {
-    const { turnActionsUsed, locationsUsedThisTurn, currentTurnPlayerId, players } = get()
-    get().movePawn(currentTurnPlayerId, location)
+    const { turnActionsUsed, locationsUsedThisTurn, currentTurnPlayerId, activePlayerId, players } = get()
+    // In local play the dropdown sets activePlayerId to the acting player; in online play they're always equal
+    const actingPlayerId = activePlayerId || currentTurnPlayerId
+    get().movePawn(actingPlayerId, location)
+
+    // Compute ambush in advance (using snapshot from before this set, which is fine —
+    // movePawn only touches pawns/actionLog, not player data or ambushesPlaced).
+    const isFirstVisit = !locationsUsedThisTurn.includes(location)
+    let ambushPendingUpdate: GameState['ambushPending'] = null
+    // Ambush check: runs whenever a non-Ranger player visits a location — NOT gated by
+    // isFirstVisit because that tracks turn-action slots (which may already contain the
+    // location if the Ranger visited it on their own turn while the dropdown was set to
+    // them, or via the bonus-action mechanic).  Instead we guard by ambushPending being
+    // null so we never clobber an already-pending ambush prompt.
+    const existingAmbushPending = get().ambushPending
+    if (!existingAmbushPending) {
+      const ranger = players.find(p => p.classId === 'ranger')
+      if (ranger && ranger.id !== actingPlayerId) {
+        const ambushCard = ranger.ambushesPlaced.find(c => c.location === location)
+        const target = players.find(p => p.id === actingPlayerId)
+        if (ambushCard && target && !target.hasNightWatcher) {
+          ambushPendingUpdate = { rangerId: ranger.id, targetPlayerId: actingPlayerId, location, card: ambushCard }
+        }
+      }
+    }
+
     set(s => {
       // Reckoning at Duskreach (rn06): any Paladin holding rn06 earns +1 coin when Thieves' Guild is used
       const rn06Logs: LogEntry[] = []
@@ -1989,24 +2101,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return {
         players: updatedPlayers,
         turnActionsUsed: turnActionsUsed + 1,
-        locationsUsedThisTurn: locationsUsedThisTurn.includes(location)
-          ? locationsUsedThisTurn
-          : [...locationsUsedThisTurn, location],
+        locationsUsedThisTurn: isFirstVisit
+          ? [...locationsUsedThisTurn, location]
+          : locationsUsedThisTurn,
         actionLog: rn06Logs.length > 0 ? [...rn06Logs, ...s.actionLog.slice(0, 49 - rn06Logs.length)] : s.actionLog,
+        // Set ambush atomically in the same update so React never sees a state where
+        // the action is consumed but ambushPending is still null.
+        ...(ambushPendingUpdate ? { ambushPending: ambushPendingUpdate } : {}),
       }
     })
-
-    // Check for Ambush — fires on the first visit to a location only, not on Ranger's own turn
-    if (!locationsUsedThisTurn.includes(location)) {
-      const ranger = players.find(p => p.classId === 'ranger')
-      if (ranger && ranger.id !== currentTurnPlayerId) {
-        const ambushCard = ranger.ambushesPlaced.find(c => c.location === location)
-        const target = players.find(p => p.id === currentTurnPlayerId)
-        if (ambushCard && target && !target.hasNightWatcher) {
-          set({ ambushPending: { rangerId: ranger.id, targetPlayerId: currentTurnPlayerId, location, card: ambushCard } })
-        }
-      }
-    }
   },
 
   endTurn() {
@@ -2089,6 +2192,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             rolls,
             winnerId: isTie ? null : winners[0].playerId,
             spoils,
+            acknowledgedBy: [],
           },
         })
         // Don't advance turn yet — wait for dismiss
@@ -2102,6 +2206,40 @@ export const useGameStore = create<GameStore>((set, get) => ({
   dismissClash() {
     set({ clashResult: null })
     get()._advanceTurn()
+  },
+
+  acknowledgeClash(playerId) {
+    const cr = get().clashResult
+    if (!cr) return
+    // Pass-and-play (null playerId): dismiss immediately for everyone
+    if (playerId === null) {
+      set({ clashResult: null })
+      get()._advanceTurn()
+      return
+    }
+    // Already acknowledged
+    if (cr.acknowledgedBy.includes(playerId)) return
+    const newAcknowledgedBy = [...cr.acknowledgedBy, playerId]
+    const allDone = cr.rolls.every(r => newAcknowledgedBy.includes(r.playerId))
+    if (allDone) {
+      set({ clashResult: null })
+      get()._advanceTurn()
+    } else {
+      set({ clashResult: { ...cr, acknowledgedBy: newAcknowledgedBy } })
+    }
+  },
+
+  submitBarbarianClashChoice(playerId, cardIds) {
+    const { barbarianClashOptOut } = get()
+    if (!barbarianClashOptOut) return
+    const newChoices = { ...barbarianClashOptOut.choices, [playerId]: cardIds }
+    const allDecided = barbarianClashOptOut.otherPlayerIds.every(id => id in newChoices)
+    if (allDecided) {
+      set({ barbarianClashOptOut: { ...barbarianClashOptOut, choices: newChoices } })
+      get().resolveBarbarianClashOptOut(newChoices)
+    } else {
+      set({ barbarianClashOptOut: { ...barbarianClashOptOut, choices: newChoices } })
+    }
   },
 
   resolveBarbarianClashOptOut(choices) {
@@ -2158,6 +2296,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         let postPlayers = get().players
         const spoils: { winnerId: string; cardName: string; fromName: string }[] = []
 
+        const clashStolenFromIds: string[] = []
         if (!isTie) {
           const winnerId = winners[0].playerId
           const loserIds = fightRolls.filter(r => r.playerId !== winnerId).map(r => r.playerId)
@@ -2172,12 +2311,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
             })
             const loserName = players.find(p => p.id === loserId)?.name ?? ''
             spoils.push({ winnerId, cardName: stolen.name, fromName: loserName })
+            clashStolenFromIds.push(loserId)
           }
           postPlayers = postPlayers.map(p => p.id === winnerId ? { ...p, activeTokens: Math.min(2, p.activeTokens + 1) } : p)
         }
+        // Clear Night Watcher from everyone; assign or queue choice based on how many were stolen from
+        // Night Watcher is disabled in 2-player (only one opponent, so it would permanently block them)
+        const fightWinnerId = isTie ? null : winners[0].playerId
+        const nwUpdate = players.length <= 2
+          ? { players: postPlayers, nightWatcherChoicePending: null as null }
+          : clashStolenFromIds.length === 1
+          ? { players: postPlayers.map(p => ({ ...p, hasNightWatcher: p.id === clashStolenFromIds[0] })), nightWatcherChoicePending: null as null }
+          : clashStolenFromIds.length > 1
+          ? { players: postPlayers.map(p => ({ ...p, hasNightWatcher: false })), nightWatcherChoicePending: { attackerId: fightWinnerId ?? '', candidateIds: clashStolenFromIds } }
+          : { players: postPlayers, nightWatcherChoicePending: null as null }
         set(s => ({
-          players: postPlayers,
-          clashResult: { location, rolls: fightRolls, winnerId: isTie ? null : winners[0].playerId, spoils },
+          ...nwUpdate,
+          clashResult: { location, rolls: fightRolls, winnerId: isTie ? null : winners[0].playerId, spoils, acknowledgedBy: [] },
           actionLog: [logEntry(`${barb.name} retreated — remaining players Clash!`), ...s.actionLog.slice(0, 49)],
         }))
         // Wait for dismissClash
@@ -2198,6 +2348,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       let postPlayers = get().players
       const spoils: { winnerId: string; cardName: string; fromName: string }[] = []
 
+      const fullClashStolenFromIds: string[] = []
       if (!isTie) {
         const winnerId = winners[0].playerId
         const loserIds = rolls.filter(r => r.playerId !== winnerId).map(r => r.playerId)
@@ -2212,12 +2363,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
           })
           const loserName = players.find(p => p.id === loserId)?.name ?? ''
           spoils.push({ winnerId, cardName: stolen.name, fromName: loserName })
+          fullClashStolenFromIds.push(loserId)
         }
         postPlayers = postPlayers.map(p => p.id === winnerId && p.classId !== 'monk' ? { ...p, activeTokens: Math.min(2, p.activeTokens + 1) } : p)
       }
+      const fullWinnerId = isTie ? null : winners[0].playerId
+      const fullNwUpdate = players.length <= 2
+        ? { players: postPlayers, nightWatcherChoicePending: null as null }
+        : fullClashStolenFromIds.length === 1
+        ? { players: postPlayers.map(p => ({ ...p, hasNightWatcher: p.id === fullClashStolenFromIds[0] })), nightWatcherChoicePending: null as null }
+        : fullClashStolenFromIds.length > 1
+        ? { players: postPlayers.map(p => ({ ...p, hasNightWatcher: false })), nightWatcherChoicePending: { attackerId: fullWinnerId ?? '', candidateIds: fullClashStolenFromIds } }
+        : { players: postPlayers, nightWatcherChoicePending: null as null }
       set(s => ({
-        players: postPlayers,
-        clashResult: { location, rolls, winnerId: isTie ? null : winners[0].playerId, spoils },
+        ...fullNwUpdate,
+        clashResult: { location, rolls, winnerId: isTie ? null : winners[0].playerId, spoils, acknowledgedBy: [] },
         actionLog: [logEntry(`${barb.name} stayed — Clash resolves (Barbarian +2 to roll)!`), ...s.actionLog.slice(0, 49)],
       }))
     }
@@ -2229,6 +2389,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const target = players.find(p => p.id === targetPlayerId)
     if (!attacker || !target || attacker.activeTokens < 1) return
 
+    if (target.hasNightWatcher) {
+      set(s => ({
+        actionLog: [logEntry(`${attacker.name}'s Reckless Swing on ${target.name} was blocked by the Night Watcher!`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      }))
+      return
+    }
+
     // Deduplicate and only break non-shuttered windows from the provided indices
     const toBreak = [...new Set(windowIndices)].filter(i => target.windows[i]?.status !== 'shuttered')
     if (toBreak.length === 0) return
@@ -2238,18 +2405,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const breakTwo = theirRep > myRep
 
     set(s => ({
-      players: s.players.map(p =>
-        p.id === targetPlayerId
-          ? { ...p, windows: p.windows.map((w, i) => toBreak.includes(i) ? { ...w, status: 'broken' as const } : w) }
-          : p.id === byPlayerId
-          ? { ...p, activeTokens: p.activeTokens - 1 }
-          : p
-      ),
+      players: s.players.map(p => {
+        if (p.id === targetPlayerId) return { ...p, windows: p.windows.map((w, i) => toBreak.includes(i) ? { ...w, status: 'broken' as const } : w), hasNightWatcher: players.length > 2 }
+        if (p.id === byPlayerId) return { ...p, activeTokens: p.activeTokens - 1, hasNightWatcher: false }
+        return { ...p, hasNightWatcher: false }
+      }),
       classAbilitiesUsedThisTurn: s.classAbilitiesUsedThisTurn.includes('recklessSwing')
         ? s.classAbilitiesUsedThisTurn
         : [...s.classAbilitiesUsedThisTurn, 'recklessSwing'],
       actionLog: [logEntry(
-        `${attacker.name} used Reckless Swing — broke ${toBreak.length} window${toBreak.length > 1 ? 's' : ''} of ${target.name}${breakTwo ? ' (they had more Rep!)' : ''}.`,
+        `${attacker.name} used Reckless Swing — broke ${toBreak.length} window${toBreak.length > 1 ? 's' : ''} of ${target.name}${breakTwo ? ' (they had more Rep!)' : ''}${players.length > 2 ? `. ${target.name} now holds the Night Watcher.` : '.'}`,
         byPlayerId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -2498,26 +2663,41 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ negotiatePending: { proposerId, targetId, offeredCardId, paladinRepType } })
   },
 
-  resolveNegotiate(accept, counterCardId) {
-    const { negotiatePending, players, negotiatesCompletedThisTurn } = get()
+  counterNegotiate(counterCardId) {
+    const { negotiatePending } = get()
     if (!negotiatePending) return
+    set({
+      negotiatePending: null,
+      negotiateReview: {
+        proposerId: negotiatePending.proposerId,
+        targetId: negotiatePending.targetId,
+        offeredCardId: negotiatePending.offeredCardId,
+        counterCardId,
+        paladinRepType: negotiatePending.paladinRepType,
+      },
+    })
+  },
+
+  resolveNegotiate(accept) {
+    const { negotiateReview, players, negotiatesCompletedThisTurn } = get()
+    if (!negotiateReview) return
 
     if (!accept) {
-      set({ negotiatePending: null })
+      set({ negotiateReview: null })
       return
     }
 
-    const proposer = players.find(p => p.id === negotiatePending.proposerId)
-    const target = players.find(p => p.id === negotiatePending.targetId)
-    if (!proposer || !target || !counterCardId) { set({ negotiatePending: null }); return }
+    const proposer = players.find(p => p.id === negotiateReview.proposerId)
+    const target = players.find(p => p.id === negotiateReview.targetId)
+    if (!proposer || !target) { set({ negotiateReview: null }); return }
 
-    const offeredCard = proposer.hoard.find(c => c.id === negotiatePending.offeredCardId)
-    const counterCard = target.hoard.find(c => c.id === counterCardId)
-    if (!offeredCard || !counterCard) { set({ negotiatePending: null }); return }
+    const offeredCard = proposer.hoard.find(c => c.id === negotiateReview.offeredCardId)
+    const counterCard = target.hoard.find(c => c.id === negotiateReview.counterCardId)
+    if (!offeredCard || !counterCard) { set({ negotiateReview: null }); return }
 
     // Paladin Honourable Trade: rep bonus on successful negotiate
     // rn08 Merchant of Saltholm doubles the Paladin's own rep gain only — target always gets +1
-    const prt = negotiatePending.paladinRepType
+    const prt = negotiateReview.paladinRepType
     const isPaladin = proposer.classId === 'paladin'
     const proposerRepGain = isPaladin && prt
       ? (proposer.renownCards.some(c => c.id === 'rn08') ? 2 : 1)
@@ -2528,7 +2708,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const isFirstNegotiate = negotiatesCompletedThisTurn === 0
 
     if (isFirstNegotiate) {
-      get().movePawn(negotiatePending.proposerId, 'guildhall')
+      get().movePawn(negotiateReview.proposerId, 'guildhall')
     }
 
     const logMsg =
@@ -2551,7 +2731,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
         return p
       }),
-      negotiatePending: null,
+      negotiateReview: null,
       negotiatesCompletedThisTurn: s.negotiatesCompletedThisTurn + 1,
       ...(isFirstNegotiate ? {
         turnActionsUsed: s.turnActionsUsed + 1,
@@ -2733,6 +2913,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ righteousDuelResult: null })
   },
 
+  dismissTrickShotForcedRoll() {
+    set({ trickShotForcedRoll: null })
+  },
+
+  dismissRn04ForcedRoll() {
+    set({ rn04ForcedRoll: null })
+  },
+
   talesOfOld(playerId, cardId, options) {
     const { players, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
@@ -2750,6 +2938,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
       )
       let newDeck = s.resourceDeck
       let newDiscard = s.resourceDiscard
+      // Night Watcher tracking for rn06 (single steal) and rn09 (multi steal)
+      let nwVictimId: string | null = null        // single-target: auto-assign
+      let nwCandidateIds: string[] | null = null  // multi-target: choice pending
 
       switch (cardId) {
         case 'rn01': { // Trade up to 3 with Flea Market
@@ -2835,14 +3026,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
           const tgtId = options?.rn06TargetId
           const cardIds = options?.rn06CardIds ?? []
           const tgt = tgtId ? s.players.find(p => p.id === tgtId) : null
-          const taken = cardIds.map(id => tgt?.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
-          if (tgt && taken.length > 0) {
-            updatedPlayers = updatedPlayers.map(p => {
-              if (p.id === tgt.id) return { ...p, hoard: p.hoard.filter(c => !cardIds.includes(c.id)) }
-              if (p.id === playerId) return { ...p, hoard: [...p.hoard, ...taken] }
-              return p
-            })
-            logMsg += `Reckoning at Duskreach — took ${taken.map(c => c.name).join(', ')} from ${tgt.name}.`
+          if (s.players.length > 2 && tgt?.hasNightWatcher) {
+            logMsg += `Reckoning at Duskreach — ${tgt.name}'s Night Watcher blocked the theft!`
+          } else if (tgt) {
+            const taken = cardIds.map(id => tgt.hoard.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
+            if (taken.length > 0) {
+              updatedPlayers = updatedPlayers.map(p => {
+                if (p.id === tgt.id) return { ...p, hoard: p.hoard.filter(c => !cardIds.includes(c.id)) }
+                if (p.id === playerId) return { ...p, hoard: [...p.hoard, ...taken] }
+                return p
+              })
+              nwVictimId = s.players.length > 2 ? tgt.id : null
+              logMsg += `Reckoning at Duskreach — took ${taken.map(c => c.name).join(', ')} from ${tgt.name}${s.players.length > 2 ? `. ${tgt.name} now holds the Night Watcher.` : '.'}`
+            } else {
+              logMsg += 'Reckoning at Duskreach — no valid target/cards.'
+            }
           } else {
             logMsg += 'Reckoning at Duskreach — no valid target/cards.'
           }
@@ -2871,36 +3069,51 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }
           break
         }
-        case 'rn09': { // Take 1 random from each player's hoard
-          const taken: { card: ResourceCard; fromName: string }[] = []
+        case 'rn09': { // Take 1 random from each player's hoard (Night Watcher ignored — multi-target)
+          const taken: { card: ResourceCard; fromId: string; fromName: string }[] = []
           updatedPlayers = updatedPlayers.map(p => {
             if (p.id === playerId || p.hoard.length === 0) return p
             const idx = Math.floor(Math.random() * p.hoard.length)
             const card = p.hoard[idx]
-            taken.push({ card, fromName: p.name })
+            taken.push({ card, fromId: p.id, fromName: p.name })
             return { ...p, hoard: p.hoard.filter(c => c.id !== card.id), stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== card.id) }
           })
           updatedPlayers = updatedPlayers.map(p =>
             p.id === playerId ? { ...p, hoard: [...p.hoard, ...taken.map(t => t.card)], stolenHoardCardIds: [...p.stolenHoardCardIds, ...taken.map(t => t.card.id)] } : p
           )
-          logMsg += taken.length > 0
-            ? `Shadow of Vel'sha — took ${taken.map(t => `${t.card.name} from ${t.fromName}`).join(', ')}.`
-            : "Shadow of Vel'sha — no hoards to take from."
+          if (taken.length === 1) {
+            nwVictimId = s.players.length > 2 ? taken[0].fromId : null
+            logMsg += `Shadow of Vel'sha — took ${taken[0].card.name} from ${taken[0].fromName}${s.players.length > 2 ? `. ${taken[0].fromName} now holds the Night Watcher.` : '.'}`
+          } else if (taken.length > 1) {
+            nwCandidateIds = s.players.length > 2 ? taken.map(t => t.fromId) : null
+            logMsg += `Shadow of Vel'sha — took ${taken.map(t => `${t.card.name} from ${t.fromName}`).join(', ')}${s.players.length > 2 ? '. (Night Watcher choice pending)' : '.'}`
+          } else {
+            logMsg += "Shadow of Vel'sha — no hoards to take from."
+          }
           break
         }
-        case 'rn10': { // Use Righteous Duel without expending Active token — grant +1 token
+        case 'rn10': { // Use Righteous Duel without expending Active token — grant +1 token (immediately consumed by initiateRighteousDuel)
           updatedPlayers = updatedPlayers.map(p =>
             p.id !== playerId ? p : { ...p, activeTokens: p.activeTokens + 1 }
           )
-          logMsg += 'Unbroken Siege — gained 1 Active token (use for Righteous Duel).'
+          logMsg += 'Unbroken Siege — spent to initiate Righteous Duel.'
           break
         }
       }
 
+      // Night Watcher: auto-assign to single victim, or queue choice for multi
+      const finalPlayers = nwVictimId
+        ? updatedPlayers.map(p => ({ ...p, hasNightWatcher: p.id === nwVictimId }))
+        : nwCandidateIds
+        ? updatedPlayers.map(p => ({ ...p, hasNightWatcher: false }))
+        : updatedPlayers
       return {
-        players: updatedPlayers,
+        players: finalPlayers,
         resourceDeck: newDeck,
         resourceDiscard: newDiscard,
+        nightWatcherChoicePending: nwCandidateIds
+          ? { attackerId: playerId, candidateIds: nwCandidateIds }
+          : null,
         actionLog: [logEntry(logMsg, playerId), ...s.actionLog.slice(0, 49)],
       }
     })
@@ -2974,7 +3187,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       // From Round 2 onward it fires in completeSellPhase (after the sell phase UI).
       if (round !== 1) return
       const roll = Math.ceil(Math.random() * 6)
-      const count = Math.floor(roll / 2)
+      const count = Math.max(1, Math.floor(roll / 2))
       const st = get()
       const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
       set(s => ({
@@ -3027,6 +3240,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         righteousDuelPending: null,
         righteousDuelResult: null,
         negotiatePending: null,
+        negotiateReview: null,
         negotiatesCompletedThisTurn: 0,
         politePromoterResetUsed: false,
         bonusActionsThisTurn: 0,
@@ -3047,6 +3261,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         righteousDuelPending: null,
         righteousDuelResult: null,
         negotiatePending: null,
+        negotiateReview: null,
         negotiatesCompletedThisTurn: 0,
         politePromoterResetUsed: false,
         bonusActionsThisTurn: 0,
@@ -3169,10 +3384,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // Auto-replace any claimed visitors with new ones from the deck
     if (claimedVisitorIdxs.length > 0) get().refillVisitors()
 
-    // Ranger passive: whenever any Visitor is completed, prompt Ranger to Trade 1
+    // Ranger passive: Trade 1 per Visitor completed
     if (claimedVisitorIdxs.length > 0) {
       const ranger = get().players.find(p => p.classId === 'ranger')
-      if (ranger) set({ rangerVisitorTradePending: { rangerId: ranger.id } })
+      if (ranger) set({ rangerVisitorTradePending: { rangerId: ranger.id, tradesRemaining: claimedVisitorIdxs.length } })
     }
   },
 
@@ -3203,7 +3418,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       classAbilitiesUsedThisTurn: s.classAbilitiesUsedThisTurn.includes('placeAmbush')
         ? s.classAbilitiesUsedThisTurn
         : [...s.classAbilitiesUsedThisTurn, 'placeAmbush'],
-      actionLog: [logEntry(`${ranger.name} placed ${validCards.length} Ambush card${validCards.length !== 1 ? 's' : ''} (${validCards.map(c => c.location).join(', ')}).`, playerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`${ranger.name} placed ${validCards.length} Ambush card${validCards.length !== 1 ? 's' : ''}.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -3223,11 +3438,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set(s => ({
         ambushPending: null,
         players: s.players.map(p => {
-          if (p.id === rangerId) return { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id) }
-          if (p.id === targetPlayerId && breakableIdx >= 0) return { ...p, windows: p.windows.map((w, i) => i === breakableIdx ? { ...w, status: 'broken' as WindowStatus } : w) }
-          return p
+          if (p.id === rangerId) return { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id), hasNightWatcher: false }
+          if (p.id === targetPlayerId) return {
+            ...p,
+            windows: breakableIdx >= 0 ? p.windows.map((w, i) => i === breakableIdx ? { ...w, status: 'broken' as WindowStatus } : w) : p.windows,
+            hasNightWatcher: breakableIdx >= 0 && players.length > 2,
+          }
+          return { ...p, hasNightWatcher: false }
         }),
-        actionLog: [logEntry(`${ranger.name}'s Ambush sprung at ${card.location}! Broke ${target.name}'s window${breakableIdx >= 0 ? ` #${breakableIdx + 1}` : ' (none available)'}.`, rangerId), ...s.actionLog.slice(0, 49)],
+        actionLog: [logEntry(
+          `${ranger.name}'s Ambush sprung at ${card.location}! Broke ${target.name}'s window${breakableIdx >= 0 ? ` #${breakableIdx + 1}${players.length > 2 ? ` — ${target.name} now holds the Night Watcher.` : '.'}` : ' (none available).'}`,
+          rangerId
+        ), ...s.actionLog.slice(0, 49)],
       }))
     } else {
       // Steal a random hoard card from the target
@@ -3246,11 +3468,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set(s => ({
         ambushPending: null,
         players: s.players.map(p => {
-          if (p.id === rangerId) return { ...p, hoard: [...p.hoard, stolenCard], stolenHoardCardIds: [...p.stolenHoardCardIds, stolenCard.id], ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id) }
-          if (p.id === targetPlayerId) return { ...p, hoard: p.hoard.filter((_, i) => i !== stolenIdx), coins: p.coins + rn09Bonus }
-          return p
+          if (p.id === rangerId) return { ...p, hoard: [...p.hoard, stolenCard], stolenHoardCardIds: [...p.stolenHoardCardIds, stolenCard.id], ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id), hasNightWatcher: false }
+          if (p.id === targetPlayerId) return {
+            ...p,
+            hoard: p.hoard.filter((_, i) => i !== stolenIdx),
+            coins: p.coins + rn09Bonus,
+            hasNightWatcher: players.length > 2,
+          }
+          return { ...p, hasNightWatcher: false }
         }),
-        actionLog: [logEntry(`${ranger.name}'s Ambush sprung at ${card.location}! Stole ${stolenCard.name} from ${target.name}${rn09Bonus > 0 ? ` (${target.name} gained 2 coins — Shadow of Vel'sha)` : ''}.`, rangerId), ...s.actionLog.slice(0, 49)],
+        actionLog: [logEntry(
+          `${ranger.name}'s Ambush sprung at ${card.location}! Stole ${stolenCard.name} from ${target.name}.${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}${rn09Bonus > 0 ? ` (${target.name}'s Shadow of Vel'sha — gained 2 coins.)` : ''}`,
+          rangerId
+        ), ...s.actionLog.slice(0, 49)],
       }))
       void resourceDeck; void resourceDiscard // suppress unused warnings
     }
@@ -3274,6 +3504,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set(s => ({
       diceResult: newRoll,
+      trickShotForcedRoll: { roll: newRoll, rangerId, targetPlayerId },
       trickShotPending: null,
       trickShotBonusPending: bonusPending ? { rangerId, targetPlayerId } : null,
       players: s.players.map(p => p.id !== rangerId ? p : {
@@ -3327,16 +3558,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const parts = windowId.split('-w')
       const ownerId = parts[0]
       const winIdx = parseInt(parts[1] ?? '0')
-      if (ownerId === targetPlayerId) return
+      // Can't target self or the trick-shotted player
+      if (ownerId === rangerId || ownerId === targetPlayerId) return
       const owner = players.find(p => p.id === ownerId)
       if (!owner) return
+      // Night Watcher blocks the break
+      if (owner.hasNightWatcher) {
+        set(s => ({
+          trickShotBonusPending: null,
+          actionLog: [logEntry(`${ranger.name}'s Trick Shot bonus break on ${owner.name} was blocked by the Night Watcher!`, rangerId), ...s.actionLog.slice(0, 49)],
+        }))
+        return
+      }
       set(s => ({
         trickShotBonusPending: null,
-        players: s.players.map(p => p.id !== ownerId ? p : {
-          ...p,
-          windows: p.windows.map((w, i) => i === winIdx ? { ...w, status: 'broken' as WindowStatus } : w),
+        players: s.players.map(p => {
+          if (p.id === ownerId) return {
+            ...p,
+            windows: p.windows.map((w, i) => i === winIdx ? { ...w, status: 'broken' as WindowStatus } : w),
+            hasNightWatcher: players.length > 2,
+          }
+          return { ...p, hasNightWatcher: false }
         }),
-        actionLog: [logEntry(`${ranger.name}'s Trick Shot bonus — Broke ${owner.name}'s window #${winIdx + 1}.`, rangerId), ...s.actionLog.slice(0, 49)],
+        actionLog: [logEntry(`${ranger.name}'s Trick Shot bonus — Broke ${owner.name}'s window #${winIdx + 1}.${players.length > 2 ? ` ${owner.name} now holds the Night Watcher.` : ''}`, rangerId), ...s.actionLog.slice(0, 49)],
       }))
     }
   },
@@ -3348,7 +3592,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   resolveRangerVisitorTrade(playerCardId, fleaSlotIdx) {
     const { rangerVisitorTradePending, players, fleaMarket } = get()
     if (!rangerVisitorTradePending) return
-    const { rangerId } = rangerVisitorTradePending
+    const { rangerId, tradesRemaining } = rangerVisitorTradePending
     const ranger = players.find(p => p.id === rangerId)
     if (!ranger) return
 
@@ -3356,8 +3600,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const fleaCard = fleaMarket[fleaSlotIdx]
     if (!playerCard) return
 
+    const nextPending = tradesRemaining > 1
+      ? { rangerId, tradesRemaining: tradesRemaining - 1 }
+      : null
+
     set(s => ({
-      rangerVisitorTradePending: null,
+      rangerVisitorTradePending: nextPending,
       fleaMarket: s.fleaMarket.map((c, i) => i === fleaSlotIdx ? playerCard : c),
       players: s.players.map(p => {
         if (p.id !== rangerId) return p

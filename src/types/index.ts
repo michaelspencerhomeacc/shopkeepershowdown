@@ -167,6 +167,8 @@ export interface GameState {
   workOrderDeck: WorkOrderCard[]
 
   actionLog: LogEntry[]
+  /** Type of the last card fenced at the Thieves' Guild (shown on board tile) */
+  lastGuildFenceType: ResourceType | null
   diceResult: number | null
   townCrierPeek: { playerId: string; cards: VisitorCard[] } | null
   appraisePeek: { playerId: string; cards: ResourceCard[]; maxKeep: number } | null
@@ -185,6 +187,8 @@ export interface GameState {
     rolls: { playerId: string; roll: number }[]
     winnerId: string | null
     spoils: { winnerId: string; cardName: string; fromName: string }[]
+    /** IDs of participants who have clicked Continue — turn advances once all have acknowledged */
+    acknowledgedBy: string[]
   } | null
 
   barbarianClashOptOut: {
@@ -223,6 +227,14 @@ export interface GameState {
     /** Paladin only — which Rep type to gain on successful trade */
     paladinRepType?: RepType
   } | null
+  /** Set once the target has chosen a counter-card; shown to the proposer to accept or decline */
+  negotiateReview: {
+    proposerId: string
+    targetId: string
+    offeredCardId: string
+    counterCardId: string
+    paladinRepType?: RepType
+  } | null
   /** Shaman: set while waiting for target to choose 2 hoard cards to discard */
   shamanCallLightning: { shamanId: string; targetId: string } | null
   /** Counts completed Negotiate trades this turn (rn01 Council of Seven allows 2) */
@@ -256,8 +268,8 @@ export interface GameState {
     rangerId: string
     targetPlayerId: string  // cannot break this player's window
   } | null
-  /** Ranger passive: a Visitor was just completed — Ranger may Trade 1 */
-  rangerVisitorTradePending: { rangerId: string } | null
+  /** Ranger passive: one or more Visitors just completed — Ranger may Trade 1 per completion */
+  rangerVisitorTradePending: { rangerId: string; tradesRemaining: number } | null
 
   /** Last Stand at Greyveil (rn04) passive: pending reroll offer after a dice roll */
   rn04RerollPending: {
@@ -268,6 +280,29 @@ export interface GameState {
     auctionCardId?: string
     auctionFromZone?: 'hoard' | 'window'
     auctionWindowIdx?: number
+  } | null
+
+  /**
+   * Set when the Ranger forces a Trick Shot re-roll — broadcast so the Ranger and
+   * the targeted player both see the animated result.
+   * Cleared by `dismissTrickShotForcedRoll()`.
+   */
+  trickShotForcedRoll: { roll: number; rangerId: string; targetPlayerId: string } | null
+
+  /**
+   * Set when a player uses Last Stand at Greyveil (rn04) to re-roll — broadcast so
+   * the affected player sees the new result.
+   * Cleared by `dismissRn04ForcedRoll()`.
+   */
+  rn04ForcedRoll: { roll: number; playerId: string } | null
+
+  /** Multi-target break/steal: the attacker must choose which affected player receives
+   *  the Night Watcher token.  Night Watcher is ignored during the action itself;
+   *  this pending state is cleared once the attacker picks a recipient. */
+  nightWatcherChoicePending: {
+    attackerId: string
+    /** All players who were actually harmed (had a card stolen or a window broken) */
+    candidateIds: string[]
   } | null
 }
 
