@@ -498,7 +498,14 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
       }
       if (chosenEffectCount >= patienceSlots) return prev
       if (key === 'draw1') return { ...prev, draw1: true }
-      if (key === 'repair1') return { ...prev, repair1: { windowIdx: patienceRepairIdx } }
+        if (key === 'repair1') {
+            const firstBrokenIdx = brokenWindows[0]?.i
+
+            if (firstBrokenIdx === undefined) return prev
+
+            setPatienceRepairIdx(firstBrokenIdx)
+            return { ...prev, repair1: { windowIdx: firstBrokenIdx } }
+        }
       if (key === 'trade1') return { ...prev, trade1: { playerCardId: patienceTradeCardId, fleaSlotIdx: patienceTradeFleaIdx } }
       if (key === 'forage2' && !canPatienceForage) return prev
       if (key === 'forage2') return { ...prev, forage2: true }
@@ -510,7 +517,15 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
     // Rebuild effects with latest UI values
     const built: ShamanPatienceEffects = {}
     if (patienceEffects.draw1) built.draw1 = true
-    if (patienceEffects.repair1 !== undefined) built.repair1 = { windowIdx: patienceRepairIdx }
+      if (patienceEffects.repair1 !== undefined) {
+          const repairIdx = brokenWindows.some(({ i }) => i === patienceRepairIdx)
+              ? patienceRepairIdx
+              : brokenWindows[0]?.i
+
+          if (repairIdx !== undefined) {
+              built.repair1 = { windowIdx: repairIdx }
+          }
+      }
     const tradeableCards = [...player.hoard, ...player.windows.flatMap((w, wi) => w.card && w.status !== 'broken' ? [w.card] : [])]
     if (patienceEffects.trade1 !== undefined) built.trade1 = { playerCardId: patienceTradeCardId || tradeableCards[0]?.id || '', fleaSlotIdx: patienceTradeFleaIdx }
     if (patienceEffects.forage2 && canPatienceForage) built.forage2 = true
