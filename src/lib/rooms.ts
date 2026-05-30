@@ -94,3 +94,10 @@ export async function closeRoom(roomId: string) {
     .update({ status: 'closed' })
     .eq('id', roomId)
 }
+
+export async function abandonRoom(roomId: string) {
+  return supabase
+    .from('rooms')
+    .update({ status: 'abandoned' })
+    .eq('id', roomId)
+}

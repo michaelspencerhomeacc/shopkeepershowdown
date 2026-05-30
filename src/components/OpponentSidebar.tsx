@@ -16,9 +16,11 @@ interface Props {
   onSelectPlayer: (id: string | null) => void
   localPlayer: Player
   localPlayerIndex: number
+  /** ID of the player whose turn it currently is — drives the green pulse indicator. */
+  currentTurnPlayerId?: string
 }
 
-export function OpponentSidebar({ opponents, viewingPlayerId, onSelectPlayer, localPlayer, localPlayerIndex }: Props) {
+export function OpponentSidebar({ opponents, viewingPlayerId, onSelectPlayer, localPlayer, localPlayerIndex, currentTurnPlayerId }: Props) {
   if (opponents.length === 0) return null
 
   const localPawnColor = PAWN_COLORS[localPlayerIndex % PAWN_COLORS.length]
@@ -38,11 +40,21 @@ export function OpponentSidebar({ opponents, viewingPlayerId, onSelectPlayer, lo
         }`}
       >
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg overflow-hidden border border-parchment-700/40 flex-shrink-0">
-            {localCls
-              ? <CardImage src={localCls.imageFile} alt={localCls.name} className="w-full h-full object-cover object-top" fallbackText={localCls.name[0]} />
-              : <div className="w-full h-full bg-ink-700 flex items-center justify-center text-parchment-500 text-xs">?</div>
-            }
+          <div className="relative flex-shrink-0">
+            {localPlayer.id === currentTurnPlayerId && (
+              <>
+                <div className="absolute inset-[-4px] rounded-xl animate-ping bg-green-400/50 pointer-events-none z-0" />
+                <div className="absolute inset-[-4px] rounded-xl bg-green-400/15 ring-1 ring-green-400/60 pointer-events-none z-0" />
+              </>
+            )}
+            <div className={`w-7 h-7 rounded-lg overflow-hidden border relative z-10 ${
+              localPlayer.id === currentTurnPlayerId ? 'border-green-400' : 'border-parchment-700/40'
+            }`}>
+              {localCls
+                ? <CardImage src={localCls.imageFile} alt={localCls.name} className="w-full h-full object-cover object-top" fallbackText={localCls.name[0]} />
+                : <div className="w-full h-full bg-ink-700 flex items-center justify-center text-parchment-500 text-xs">?</div>
+              }
+            </div>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
@@ -73,11 +85,21 @@ export function OpponentSidebar({ opponents, viewingPlayerId, onSelectPlayer, lo
             }`}
           >
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg overflow-hidden border border-parchment-700/40 flex-shrink-0">
-                {cls
-                  ? <CardImage src={cls.imageFile} alt={cls.name} className="w-full h-full object-cover object-top" fallbackText={cls.name[0]} />
-                  : <div className="w-full h-full bg-ink-700 flex items-center justify-center text-parchment-500 text-xs">?</div>
-                }
+              <div className="relative flex-shrink-0">
+                {player.id === currentTurnPlayerId && (
+                  <>
+                    <div className="absolute inset-[-4px] rounded-xl animate-ping bg-green-400/50 pointer-events-none z-0" />
+                    <div className="absolute inset-[-4px] rounded-xl bg-green-400/15 ring-1 ring-green-400/60 pointer-events-none z-0" />
+                  </>
+                )}
+                <div className={`w-7 h-7 rounded-lg overflow-hidden border relative z-10 ${
+                  player.id === currentTurnPlayerId ? 'border-green-400' : 'border-parchment-700/40'
+                }`}>
+                  {cls
+                    ? <CardImage src={cls.imageFile} alt={cls.name} className="w-full h-full object-cover object-top" fallbackText={cls.name[0]} />
+                    : <div className="w-full h-full bg-ink-700 flex items-center justify-center text-parchment-500 text-xs">?</div>
+                  }
+                </div>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">

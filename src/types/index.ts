@@ -89,7 +89,7 @@ export interface WindowSlot {
   card: ResourceCard | null
   status: WindowStatus
   stolen: boolean
-  /** True when shuttered by rn03 Gates of Mirhollow — reopens at round start, not turn start */
+  /** True when shuttered by rn03 Gates of Mirhollow — reopens at the start of the Paladin's next turn */
   roundShuttered?: boolean
 }
 

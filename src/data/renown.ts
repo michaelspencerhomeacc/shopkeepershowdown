@@ -22,7 +22,7 @@ export const RENOWN_CARDS: RenownCard[] = [
     name: 'Gates of Mirhollow',
     imageFile: '/cards/renown/Gates of Mirhollow.png',
     passive: 'Whenever you Repair a window, gain 1 Reputation.',
-    spend: 'Close 2 windows until the start of the next round; gain 1 Reputation each.',
+    spend: 'Close 2 windows until the start of your next turn; gain 1 Reputation each.',
     clashBonus: 0,
   },
   {

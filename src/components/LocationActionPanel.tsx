@@ -1407,23 +1407,38 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
       <div className="space-y-1">
         <BackButton onBack={onBack} />
 
-        {/* Repair All Windows — with rep type selection */}
+        {/* Repair All Windows — Paladins also gain Rep; others just repair */}
         <div className="space-y-1 pb-1">
-          <div className="text-[10px] text-parchment-500">Repair + Gain Rep:</div>
-          <div className="flex flex-wrap gap-1">
-            {REP_TYPES.map(rt => (
-              <button key={rt} type="button" onClick={() => setRepairRepType(rt)}
-                className={repBtnCls(rt, repairRepType === rt)}
-              >{rt}</button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => { repairAllWindows(player.id, repairRepType); onAction() }}
-            className="btn-secondary text-xs px-2 py-0.5"
-          >
-            <Keyword name="Repair">Repair</Keyword> All Windows → +1 {repairRepType}
-          </button>
+          {player.classId === 'paladin' ? (
+            <>
+              <div className="text-[10px] text-parchment-500">Repair + Gain Rep (Paladin):</div>
+              <div className="flex flex-wrap gap-1">
+                {REP_TYPES.map(rt => (
+                  <button key={rt} type="button" onClick={() => setRepairRepType(rt)}
+                    className={repBtnCls(rt, repairRepType === rt)}
+                  >{rt}</button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => { repairAllWindows(player.id, repairRepType); onAction() }}
+                className="btn-secondary text-xs px-2 py-0.5"
+              >
+                <Keyword name="Repair">Repair</Keyword> All Windows → +1 {repairRepType}
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="text-[10px] text-parchment-500">Repair:</div>
+              <button
+                type="button"
+                onClick={() => { repairAllWindows(player.id, undefined); onAction() }}
+                className="btn-secondary text-xs px-2 py-0.5"
+              >
+                <Keyword name="Repair">Repair</Keyword> All Windows
+              </button>
+            </>
+          )}
         </div>
 
         <div className="border-t border-parchment-800/30 pt-1 space-y-1">

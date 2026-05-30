@@ -40,11 +40,13 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
     setWindowStatus, setWindowStolen, drawWorkOrders, chooseWorkOrder,
     adjustDebt, adjustMomentum, transferNightWatcher, reorderHoard, swapWindows,
     players, currentTurnPlayerId,
+    endTurn, turnActionsUsed, bonusActionsThisTurn,
   } = useGameStore()
 
   const [showHoard, setShowHoard] = useState(true)
   const [placingCardId, setPlacingCardId] = useState<string | null>(null)
   const [dragOverHoardIdx, setDragOverHoardIdx] = useState<number | null>(null)
+  const [showEndTurnWarn, setShowEndTurnWarn] = useState(false)
 
   const classInfo = CLASSES.find(c => c.id === player.classId)
   const pendingWorkOrders = (player as Player & { _pendingWorkOrders?: import('../types').WorkOrderCard[] })._pendingWorkOrders
@@ -124,40 +126,8 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
         ))}
       </div>
 
-      {/* Active Tokens — hidden for Monk (they use Momentum instead) */}
+      {/* Class-specific token counters (active tokens moved to ClassAbilitiesPanel header) */}
       <div className="flex items-center gap-2">
-        {player.classId !== 'monk' && (
-          <>
-            <span className="text-sm text-parchment-400">Active:</span>
-            <div className="flex gap-1">
-              {Array.from({ length: 2 }, (_, i) => (
-                <div
-                  key={i}
-                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all
-                    ${isOwn ? 'cursor-pointer' : 'cursor-default'}
-                    ${i < player.activeTokens
-                      ? 'border-gold-400 bg-gold-400/30'
-                      : 'border-parchment-700/40 bg-transparent opacity-40'}`}
-                  onClick={isOwn ? () => i < player.activeTokens
-                    ? spendActiveToken(player.id)
-                    : refreshActiveTokens(player.id) : undefined}
-                  title={i < player.activeTokens ? 'Spend token' : 'Refresh tokens'}
-                >
-                  {i < player.activeTokens && <div className="w-2 h-2 rounded-full bg-gold-400" />}
-                </div>
-              ))}
-              {isOwn && (
-                <button
-                  onClick={() => refreshActiveTokens(player.id)}
-                  className="text-xs text-parchment-500 hover:text-parchment-300 ml-1"
-                  title="Refresh all active tokens"
-                >
-                  ↺
-                </button>
-              )}
-            </div>
-          </>
-        )}
 
         {/* Class-specific tokens */}
         {player.classId === 'warlock' && (
@@ -353,6 +323,48 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
       <div className={!isOwn ? 'pointer-events-none select-none opacity-75' : ''}>
         <ClassAbilitiesPanel player={player} isActiveTurn={player.id === currentTurnPlayerId} isOwn={isOwn} />
       </div>
+
+      {/* End Turn strip — only shown to the active player */}
+      {isOwn && isMyTurn && (
+        <div className="border-t border-gold-500/30 pt-3 mt-1">
+          {showEndTurnWarn && (
+            <div className="mb-2 bg-amber-900/30 border border-amber-600/40 rounded-lg px-3 py-2 text-xs text-amber-200">
+              You have empty windows. Fill them or confirm end turn.
+              <div className="flex gap-2 mt-1.5">
+                <button onClick={() => setShowEndTurnWarn(false)} className="btn-secondary text-xs px-2 py-0.5">Cancel</button>
+                <button onClick={() => { setShowEndTurnWarn(false); endTurn() }} className="btn-primary text-xs px-2 py-0.5">End Anyway</button>
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            {/* Action pips */}
+            <div className="flex items-center gap-1">
+              {Array.from({ length: 3 + bonusActionsThisTurn }, (_, i) => (
+                <div
+                  key={i}
+                  className={`w-3 h-3 rounded-full border-2 transition-all ${
+                    i < turnActionsUsed
+                      ? 'bg-ink-700 border-parchment-700/30 opacity-40'
+                      : 'bg-gold-400/60 border-gold-400'
+                  }`}
+                />
+              ))}
+              <span className="text-xs text-parchment-500 ml-1">
+                {Math.max(0, (3 + bonusActionsThisTurn) - turnActionsUsed)} left
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                const hasEmpty = player.windows.some(w => w.status === 'normal' && !w.card)
+                if (hasEmpty) { setShowEndTurnWarn(true) } else { endTurn() }
+              }}
+              className="ml-auto btn-primary text-sm px-4 py-2 font-semibold"
+            >
+              ⏱ End Turn
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
