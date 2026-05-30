@@ -392,7 +392,7 @@ const DIE_COLORS: Record<number, string> = {
 
 function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTurn: boolean }) {
   const {
-    players, fleaMarket,
+    players, fleaMarket, resourceDiscard,
     activateElementalDie, callLightning, patienceOfStone,
     appraisePeek, completeAppraise, shamanCallLightning,
     classAbilitiesUsedThisTurn,
@@ -414,7 +414,6 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
   const [patienceRepairIdx, setPatienceRepairIdx] = useState<number>(0)
   const [patienceTradeCardId, setPatienceTradeCardId] = useState('')
   const [patienceTradeFleaIdx, setPatienceTradeFleaIdx] = useState<number>(0)
-  // patienceForageIds removed — forage2 in Patience auto-draws 2 blind from shuffled discard
   // Appraise picker (for die 5)
   const [appraiseSelected, setAppraiseSelected] = useState<string[]>([])
   // Track which die index triggered Appraise (so picker renders under the right die)
@@ -433,6 +432,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
   const fleaOptions = fleaMarket
     .map((c, i) => ({ c, i }))
     .filter(({ c }) => c !== null)
+  const canPatienceForage = resourceDiscard.length >= 4
   function toggleTradeHoard(id: string) {
     setTradeHoardIds(prev => {
       if (prev.includes(id)) return prev.filter(x => x !== id)
@@ -500,6 +500,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
       if (key === 'draw1') return { ...prev, draw1: true }
       if (key === 'repair1') return { ...prev, repair1: { windowIdx: patienceRepairIdx } }
       if (key === 'trade1') return { ...prev, trade1: { playerCardId: patienceTradeCardId, fleaSlotIdx: patienceTradeFleaIdx } }
+      if (key === 'forage2' && !canPatienceForage) return prev
       if (key === 'forage2') return { ...prev, forage2: true }
       return prev
     })
@@ -512,7 +513,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
     if (patienceEffects.repair1 !== undefined) built.repair1 = { windowIdx: patienceRepairIdx }
     const tradeableCards = [...player.hoard, ...player.windows.flatMap((w, wi) => w.card && w.status !== 'broken' ? [w.card] : [])]
     if (patienceEffects.trade1 !== undefined) built.trade1 = { playerCardId: patienceTradeCardId || tradeableCards[0]?.id || '', fleaSlotIdx: patienceTradeFleaIdx }
-    if (patienceEffects.forage2) built.forage2 = true
+    if (patienceEffects.forage2 && canPatienceForage) built.forage2 = true
     patienceOfStone(player.id, built)
     setPatienceOpen(false); setPatienceEffects({})
     setPatienceTradeCardId(''); setPatienceRepairIdx(0)
@@ -871,17 +872,21 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
 
             {/* Forage 2 */}
             <div>
-              <label className={`flex items-center gap-2 cursor-pointer px-2 py-1 rounded border ${patienceEffects.forage2 ? 'bg-purple-900/30 border-purple-600/40' : 'border-parchment-800/30'}`}>
+              <label className={`flex items-center gap-2 px-2 py-1 rounded border ${canPatienceForage ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${patienceEffects.forage2 ? 'bg-purple-900/30 border-purple-600/40' : 'border-parchment-800/30'}`}>
                 <input type="checkbox" checked={!!patienceEffects.forage2}
                   onChange={() => togglePatienceEffect('forage2')}
-                  disabled={!patienceEffects.forage2 && chosenEffectCount >= patienceSlots}
+                  disabled={!patienceEffects.forage2 && (chosenEffectCount >= patienceSlots || !canPatienceForage)}
                   className="accent-purple-500"
                 />
                 <span className="text-xs text-parchment-300 font-semibold">Forage 2</span>
               </label>
-              {patienceEffects.forage2 && (
+              {!canPatienceForage ? (
                 <div className="mt-1 pl-6">
-                  <div className="text-xs text-parchment-500 italic">Shuffles discard into deck — draws 2 random cards into your hoard.</div>
+                  <div className="text-xs text-parchment-600 italic">Requires at least 4 cards in the discard pile ({resourceDiscard.length}/4).</div>
+                </div>
+              ) : patienceEffects.forage2 && (
+                <div className="mt-1 pl-6">
+                  <div className="text-xs text-parchment-500 italic">Draw 4 random cards from the discard pile, then keep up to 2.</div>
                 </div>
               )}
             </div>
@@ -896,6 +901,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
           </div>
         )}
       </div>
+
     </div>
   )
 }
@@ -949,7 +955,6 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
   // Second negotiate (rn01 passive)
   const [neg2Target, setNeg2Target] = useState('')
   const [neg2CardId, setNeg2CardId] = useState('')
-  const [neg2RepType, setNeg2RepType] = useState<RepType>('CON')
 
   const otherPlayers = players.filter(p => p.id !== player.id)
   const canAct = isActiveTurn && player.activeTokens >= 1
@@ -961,6 +966,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
   const hasRn01 = player.renownCards.some(c => c.id === 'rn01')
   const canSecondNegotiate = isActiveTurn && hasRn01 && negotiatesCompletedThisTurn === 1 && !negotiatePending
   const neg2TargetPlayer = players.find(p => p.id === (neg2Target || otherPlayers[0]?.id))
+  const neg2OfferCard = player.hoard.find(c => c.id === (neg2CardId || player.hoard[0]?.id))
 
   function clearTalesState() {
     setRn01HoardIds([]); setRn01FleaIdxs([])
@@ -1092,22 +1098,14 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
               </button>
             ))}
           </div>
-          <div className="text-xs text-parchment-400">Your Rep type (Honourable Trade):</div>
-          <div className="flex gap-1 flex-wrap">
-            {REP_TYPES_ALL.map(rt => (
-              <button key={rt} onClick={() => setNeg2RepType(rt)}
-                className={repBtnCls(rt, neg2RepType === rt)}
-              >{rt}</button>
-            ))}
-          </div>
           <div className="text-xs text-blue-200">
-            If accepted: both get +2 coins · You get +{player.renownCards.some(c => c.id === 'rn08') ? 2 : 1} {neg2RepType} Rep · They also get +1 {neg2RepType} Rep
+            If accepted: both get +2 coins · You get +{player.renownCards.some(c => c.id === 'rn08') ? 2 : 1} {neg2OfferCard?.type ?? '?'} Rep · They also get +1 {neg2OfferCard?.type ?? '?'} Rep
           </div>
           <button
             onClick={() => {
               const tid = neg2Target || otherPlayers[0]?.id || ''
               const cid = neg2CardId || player.hoard[0]?.id || ''
-              proposeNegotiate(player.id, tid, cid, neg2RepType)
+              proposeNegotiate(player.id, tid, cid, neg2OfferCard?.type)
             }}
             disabled={player.hoard.length === 0 || otherPlayers.every(p => p.hoard.length === 0)}
             className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50"
@@ -1326,7 +1324,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                               </button>
                             ))}
                           </div>
-                          <div className="text-xs text-parchment-500">+1 CON Rep per closed window. Windows reopen at the start of your next turn.</div>
+                          <div className="text-xs text-parchment-500">+1 ARM Rep per closed window. Windows reopen at the start of your next turn.</div>
                         </div>
                       )}
                       {/* rn04: pick 1 card to discard from each other player */}

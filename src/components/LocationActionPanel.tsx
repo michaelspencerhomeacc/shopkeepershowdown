@@ -341,7 +341,6 @@ function GuildhallActions({ actionId, onAction, onBack, onClose }: { actionId: s
   const [openProfId, setOpenProfId] = useState<string | null>(null)
   const [negTarget, setNegTarget] = useState('')
   const [negCardId, setNegCardId] = useState('')
-  const [negRepType, setNegRepType] = useState<RepType>('CON')
 
   if (!player) return null
 
@@ -385,13 +384,13 @@ function GuildhallActions({ actionId, onAction, onBack, onClose }: { actionId: s
         {availableProfs.length === 0 ? (
           <div className="text-xs text-parchment-600 italic">No professionals available</div>
         ) : (
-          <div className="flex gap-3 flex-wrap">
+          <div className="grid grid-cols-3 gap-2">
             {availableProfs.map(prof => (
               <button
                 key={prof.id}
                 type="button"
                 onClick={() => setOpenProfId(prof.id)}
-                className="flex flex-col rounded-lg overflow-hidden border-2 border-parchment-700/40 hover:border-gold-400 active:scale-[.98] transition-all flex-shrink-0 w-[175px] text-left"
+                className="flex min-w-0 flex-col rounded-lg overflow-hidden border-2 border-parchment-700/40 hover:border-gold-400 active:scale-[.98] transition-all text-left"
               >
                 <img src={prof.imageFile} alt={prof.name} className="w-full h-auto block" />
                 <div className="bg-ink-800/95 px-2 py-1.5 space-y-0.5">
@@ -500,21 +499,14 @@ function GuildhallActions({ actionId, onAction, onBack, onClose }: { actionId: s
                   size="lg"
                 />
 
-                {player.classId === 'paladin' && (
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] text-blue-300 font-semibold flex-shrink-0">Rep type:</span>
-                    {REP_TYPES.map(rt => (
-                      <button
-                        key={rt}
-                        type="button"
-                        onClick={() => setNegRepType(rt)}
-                        className={repBtnCls(rt, negRepType === rt)}
-                      >
-                        {rt}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {player.classId === 'paladin' && (() => {
+                  const offered = player.hoard.find(c => c.id === (negCardId || player.hoard[0]?.id))
+                  return offered ? (
+                    <div className="text-[10px] text-blue-300 font-semibold">
+                      Honourable Trade: gain {offered.type} Rep from {offered.name}.
+                    </div>
+                  ) : null
+                })()}
 
                 <button
                   type="button"
@@ -523,7 +515,9 @@ function GuildhallActions({ actionId, onAction, onBack, onClose }: { actionId: s
                       player.id,
                       negTarget || players.find(p => p.id !== player.id)?.id || '',
                       negCardId || player.hoard[0]?.id || '',
-                      player.classId === 'paladin' ? negRepType : undefined,
+                      player.classId === 'paladin'
+                        ? player.hoard.find(c => c.id === (negCardId || player.hoard[0]?.id))?.type
+                        : undefined,
                     )
                     onAction()
                   }}
@@ -1399,6 +1393,7 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
   const targetStolenCards = targetPlayer
     ? targetPlayer.hoard.filter(c => targetPlayer.stolenHoardCardIds.includes(c.id))
     : []
+  const selectedReportCard = targetStolenCards.find(c => c.id === reportCard)
 
   const crierActive = townCrierPeek && townCrierPeek.playerId === player.id
 
@@ -1443,18 +1438,20 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
 
         <div className="border-t border-parchment-800/30 pt-1 space-y-1">
           <div className="text-[10px] text-parchment-500">Report theft + Gain Rep:</div>
-          <div className="flex flex-wrap gap-1">
-            {REP_TYPES.map(rt => (
-              <button
-                key={rt}
-                type="button"
-                onClick={() => setReportRep(rt)}
-                className={repBtnCls(rt, reportRep === rt)}
-              >
-                {rt}
-              </button>
-            ))}
-          </div>
+          {player.classId !== 'paladin' && (
+            <div className="flex flex-wrap gap-1">
+              {REP_TYPES.map(rt => (
+                <button
+                  key={rt}
+                  type="button"
+                  onClick={() => setReportRep(rt)}
+                  className={repBtnCls(rt, reportRep === rt)}
+                >
+                  {rt}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex flex-wrap gap-1">
             {players.filter(p => p.id !== player.id).map(p => (
               <button
@@ -1479,6 +1476,11 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
             size="lg"
             emptyText="No stolen cards held by this player"
           />
+          {player.classId === 'paladin' && selectedReportCard && (
+            <div className="text-[10px] text-blue-300 font-semibold">
+              Honourable Trade: gain {selectedReportCard.type} Rep from {selectedReportCard.name}.
+            </div>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -1490,7 +1492,7 @@ function BarracksActions({ actionId, onAction, onBack }: { actionId: string; onA
             disabled={!reportCard || !reportTarget}
             className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
           >
-            Report — gain {player.classId === 'paladin' ? 2 : 1} {reportRep} rep{player.classId === 'paladin' ? ' (Honourable Trade)' : ''}
+            Report — gain {player.classId === 'paladin' ? 2 : 1} {player.classId === 'paladin' ? (selectedReportCard?.type ?? '?') : reportRep} rep{player.classId === 'paladin' ? ' (Honourable Trade)' : ''}
           </button>
         </div>
       </div>

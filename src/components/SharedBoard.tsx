@@ -74,7 +74,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     negotiatePending, negotiateReview, counterNegotiate, resolveNegotiate,
     righteousDuelPending, resolveRighteousDuel,
     righteousDuelResult, dismissDuelResult,
-    appraisePeek, completeAppraise,
+    appraisePeek, completeAppraise, foragePeek, completeForage,
     endgame, advanceFinalSell,
     adjustCoins, discardResource, placeInWindow,
     resetGame, addLog,
@@ -150,6 +150,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
 
   // Hoard overflow: first player with more than 8 cards must discard before play continues
   const overflowPlayer = players.find(p => p.hoard.length > 8) ?? null
+  const patienceForagePeek = foragePeek?.source === 'patience' ? foragePeek : null
 
   // Auto-open sell phase when the active player changes (from round 2) — only for the acting player
   useEffect(() => {
@@ -1447,6 +1448,15 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         />
       )}
 
+      {/* Patience of Stone Forage 2 waits until hoard overflow has been resolved. */}
+      {!overflowPlayer && patienceForagePeek && isMe(patienceForagePeek.playerId) && (
+        <PatienceForageModal
+          player={players.find(p => p.id === patienceForagePeek.playerId)}
+          cards={patienceForagePeek.cards}
+          onDone={(keepIds) => completeForage(patienceForagePeek.playerId, keepIds)}
+        />
+      )}
+
       {/* Final sell phase */}
       {endgame?.phase === 'final-sell' && canAct && (
         <div className="fixed inset-0 z-[350] flex items-end sm:items-center justify-center bg-black/70">
@@ -2092,6 +2102,60 @@ function ClanTollModal({
             Go elsewhere — no action used
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- Patience of Stone Forage Modal ----
+
+function PatienceForageModal({
+  player,
+  cards,
+  onDone,
+}: {
+  player?: Player
+  cards: ResourceCard[]
+  onDone: (keepIds: string[]) => void
+}) {
+  const [selected, setSelected] = useState<string[]>([])
+
+  function toggleCard(id: string) {
+    setSelected(prev => {
+      if (prev.includes(id)) return prev.filter(x => x !== id)
+      if (prev.length >= 2) return prev
+      return [...prev, id]
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/70">
+      <div className="bg-ink-900 border-2 border-purple-500/60 rounded-xl p-5 shadow-2xl w-full max-w-xl mx-4 max-h-[90vh] overflow-y-auto">
+        <div className="text-center mb-4">
+          <div className="text-lg font-display font-bold text-purple-300">Patience Forage 2</div>
+          <div className="text-sm text-parchment-400 mt-1">
+            {player?.name ?? 'Shaman'} drew 4 cards from the discard pile. Keep up to 2.
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-center gap-2 mb-4">
+          {cards.map(card => (
+            <ResourceCardMini
+              key={card.id}
+              card={card}
+              size="lg"
+              selected={selected.includes(card.id)}
+              onClick={() => toggleCard(card.id)}
+            />
+          ))}
+        </div>
+
+        <button
+          onClick={() => onDone(selected)}
+          className="btn-primary text-sm px-3 py-2 w-full"
+        >
+          Keep {selected.length} card{selected.length !== 1 ? 's' : ''} and return the rest
+        </button>
       </div>
     </div>
   )

@@ -172,7 +172,7 @@ export interface GameState {
   diceResult: number | null
   townCrierPeek: { playerId: string; cards: VisitorCard[] } | null
   appraisePeek: { playerId: string; cards: ResourceCard[]; maxKeep: number } | null
-  foragePeek: { playerId: string; cards: ResourceCard[] } | null
+  foragePeek: { playerId: string; cards: ResourceCard[]; source?: 'location' | 'patience' } | null
   lastDrawnCards: ResourceCard[] | null
   visitorDemandRemaining: Record<string, DemandMap>
 
