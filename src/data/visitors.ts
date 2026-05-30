@@ -27,7 +27,7 @@ export const VISITOR_CARDS: VisitorCard[] = [
   { id: 'v21', name: 'Luka Griginey',       title: 'The Specialist',          demand: '2 CON, 2 TRI, 1 TRG', size: 'Large', imageFile: '/cards/visitors/Luka Griginey - Large.png' },
   { id: 'v22', name: 'Maizen Brikbrach',    title: 'The Lone Wolf',           demand: '2 ARM, 1 CON',        size: 'Large', imageFile: '/cards/visitors/Maizen Brikbrach - Large.png' },
   { id: 'v23', name: 'Philly Svecorin',     title: 'The Warden',              demand: '3 ARM',               size: 'Small', imageFile: '/cards/visitors/Philly Svecorin - Small.png' },
-  { id: 'v24', name: 'Romano Vertovin',     title: 'The Travelling Merchant', demand: '4 TRI',               size: 'Small', imageFile: '/cards/visitors/Romano Vertovin - Small.png' },
+  { id: 'v24', name: 'Romano Vertovin',     title: 'The Travelling Merchant', demand: '4 ANY',               size: 'Small', imageFile: '/cards/visitors/Romano Vertovin - Small.png' },
   { id: 'v25', name: 'Rose Sunguard',       title: 'The Scout',               demand: '2 ARM, 2 CON, 1 TRI', size: 'Large', imageFile: '/cards/visitors/Rose Sunguard - Large.png' },
   { id: 'v26', name: 'Saint Casien Klawus', title: 'The Cleric',              demand: '2 CON, 1 TRI',        size: 'Small', imageFile: '/cards/visitors/Saint Casien Klawus - Small.png' },
   { id: 'v27', name: 'Stephano Morsin',     title: 'The Bodyguard',           demand: '3 ARM, 1 CON',        size: 'Small', imageFile: '/cards/visitors/Stephano Morsin - Small.png' },

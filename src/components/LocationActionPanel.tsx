@@ -82,7 +82,7 @@ export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
   'thieves-guild': [
     { id: 'steal-or-break', label: 'Steal 1 or Break 1', icon: '🗡️', description: "Target another player's window." },
     { id: 'fence',          label: 'Fence',               icon: '💎', description: 'Secretly sell a stolen resource.' },
-    { id: 'launder',        label: 'Launder 2',           icon: '🌀', description: 'Convert 2 stolen cards into coins and Reputation.' },
+    { id: 'launder',        label: 'Launder 2',           icon: '🌀', description: 'Draw2 Resource cards and mark them as Stolen.' },
   ],
 }
 
@@ -1921,23 +1921,33 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
                 <div className="text-xs text-parchment-500 italic">All breakable windows are shuttered</div>
               ) : (
                 <div className="flex flex-wrap gap-1">
-                  {targetPlayer.windows.map((w, i) => {
-                    if (w.status === 'shuttered') return null
-                    return (
-                      <button
-                        key={w.id}
-                        type="button"
-                        onClick={() => setBreakWinIdx(i)}
-                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                          breakWinIdx === i
-                            ? 'bg-red-600/30 border-red-400 text-red-200'
-                            : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                        }`}
-                      >
-                        Win {i + 1}{w.card ? ` · ${w.card.name}` : ''}{w.status !== 'normal' ? ` [${w.status}]` : ''}
-                      </button>
-                    )
-                  })}
+                    {targetPlayer.windows.map((w, i) => {
+                        if (w.status === 'shuttered') return null
+
+                        return (
+                            <button
+                                key={i}
+                                onClick={() => setBreakWinIdx(i)}
+                                className={`rounded-lg border p-2 transition-colors text-left ${breakWinIdx === i
+                                        ? 'bg-red-600/30 border-red-400 text-red-200'
+                                        : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
+                                    }`}
+                            >
+                                <div className="text-[10px] font-semibold mb-1">
+                                    Window {i + 1}
+                                    {w.status !== 'normal' ? ` [${w.status}]` : ''}
+                                </div>
+
+                                {w.card ? (
+                                    <ResourceCardMini card={w.card} size="md" />
+                                ) : (
+                                    <div className="text-[10px] italic text-parchment-500">
+                                        Empty window
+                                    </div>
+                                )}
+                            </button>
+                        )
+                    })}
                 </div>
               )}
             </>
