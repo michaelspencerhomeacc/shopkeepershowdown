@@ -1932,30 +1932,32 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
                                     key={i}
                                     type="button"
                                     onClick={() => setBreakWinIdx(i)}
-                                    className={`group flex flex-col items-center rounded-xl border-2 p-2 transition-all text-left ${isSelected
-                                            ? 'bg-red-600/20 border-red-400 ring-2 ring-red-300/40'
-                                            : 'bg-ink-800/70 border-parchment-700/30 hover:border-red-400/70'
+                                    className={`flex flex-col items-stretch rounded-xl border-2 p-1.5 transition-all ${isSelected
+                                            ? 'border-red-400 bg-red-950/40 ring-2 ring-red-300/50'
+                                            : 'border-parchment-700/30 bg-ink-900/70 hover:border-red-400/70'
                                         }`}
                                 >
-                                    <div className={`mb-2 w-full text-center text-[11px] font-bold ${isSelected ? 'text-red-100' : 'text-parchment-300'
-                                        }`}>
+                                    <div
+                                        className={`pb-1 text-center text-[11px] font-bold ${isSelected ? 'text-red-100' : 'text-gold-300'
+                                            }`}
+                                    >
                                         Window {i + 1}
                                         {w.status !== 'normal' ? ` · ${w.status}` : ''}
                                     </div>
 
-                                    <div className="flex min-h-[176px] w-full items-center justify-center">
-                                        {w.card ? (
+                                    {w.card ? (
+                                        <div className="pointer-events-none flex w-full justify-center">
                                             <ResourceCardMini
                                                 card={w.card}
                                                 size="xl"
                                                 selected={isSelected}
                                             />
-                                        ) : (
-                                            <div className="flex h-[176px] w-[120px] items-center justify-center rounded-lg border border-dashed border-parchment-700/40 bg-ink-900/60 text-center text-[10px] italic text-parchment-500">
-                                                Empty
-                                            </div>
-                                        )}
-                                    </div>
+                                        </div>
+                                    ) : (
+                                        <div className="flex h-[176px] w-full items-center justify-center rounded-lg border border-dashed border-parchment-700/40 bg-ink-950/70 text-center text-[10px] italic text-parchment-500">
+                                            Empty
+                                        </div>
+                                    )}
                                 </button>
                             )
                         })}
