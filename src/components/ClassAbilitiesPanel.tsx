@@ -943,7 +943,7 @@ function repBtnCls(rt: RepType, selected: boolean) {
 
 function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTurn: boolean }) {
   const {
-    players, fleaMarket, initiateRighteousDuel, talesOfOld, classAbilitiesUsedThisTurn,
+      players, fleaMarket, initiateRighteousDuel, talesOfOld, spendActiveToken, classAbilitiesUsedThisTurn,
     proposeNegotiate, negotiatesCompletedThisTurn, negotiatePending,
   } = useGameStore()
 
@@ -1000,6 +1000,9 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
     if (cardId === 'rn05') opts.rn05RepType = rn05RepType
     if (cardId === 'rn06') { opts.rn06TargetId = rn06Target || otherPlayers[0]?.id || ''; opts.rn06CardIds = rn06Cards }
     if (cardId === 'rn08') { opts.giveTargetId = rn08Target || otherPlayers[0]?.id || ''; opts.giveCardId = rn08Card || player.hoard[0]?.id || '' }
+    if (player.activeTokens < 1) return
+
+    spendActiveToken(player.id)
     talesOfOld(player.id, cardId, opts)
     if (cardId === 'rn10') {
       // rn10 grants +1 token then we immediately spend it on a Righteous Duel
@@ -1518,18 +1521,19 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                         </div>
                       )}
                       <div className="text-xs text-amber-400 font-semibold">⚠ Card permanently removed after spending.</div>
-                      <button
-                        onClick={() => handleTalesConfirm(card.id)}
-                        disabled={
-                          (card.id === 'rn01' && (rn01HoardIds.length === 0 || rn01HoardIds.length !== rn01FleaIdxs.length)) ||
-                          (card.id === 'rn06' && rn06Cards.length < 2) ||
-                          (card.id === 'rn08' && player.hoard.length === 0) ||
-                          (card.id === 'rn10' && (!myStakeValid || challengeableTargets.length === 0))
-                        }
-                        className="btn-primary text-sm px-3 py-2 w-full disabled:opacity-50"
-                      >
-                        ✦ Spend — {card.name}
-                      </button>
+                        <button
+                            onClick={() => handleTalesConfirm(card.id)}
+                            disabled={
+                                player.activeTokens < 1 ||
+                                (card.id === 'rn01' && (rn01HoardIds.length === 0 || rn01HoardIds.length !== rn01FleaIdxs.length)) ||
+                                (card.id === 'rn06' && rn06Cards.length < 2) ||
+                                (card.id === 'rn08' && player.hoard.length === 0) ||
+                                (card.id === 'rn10' && (!myStakeValid || challengeableTargets.length === 0))
+                            }
+                            className="btn-primary text-sm px-3 py-2 w-full disabled:opacity-50"
+                        >
+                            ✦ Spend — {card.name} → spend 1 token
+                        </button>
                     </div>
                   )}
                 </div>
