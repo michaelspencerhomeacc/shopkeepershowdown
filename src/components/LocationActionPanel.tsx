@@ -1921,33 +1921,45 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
                 <div className="text-xs text-parchment-500 italic">All breakable windows are shuttered</div>
               ) : (
                 <div className="flex flex-wrap gap-1">
-                    {targetPlayer.windows.map((w, i) => {
-                        if (w.status === 'shuttered') return null
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {targetPlayer.windows.map((w, i) => {
+                            if (w.status === 'shuttered') return null
 
-                        return (
-                            <button
-                                key={i}
-                                onClick={() => setBreakWinIdx(i)}
-                                className={`rounded-lg border p-2 transition-colors text-left ${breakWinIdx === i
-                                        ? 'bg-red-600/30 border-red-400 text-red-200'
-                                        : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                                    }`}
-                            >
-                                <div className="text-[10px] font-semibold mb-1">
-                                    Window {i + 1}
-                                    {w.status !== 'normal' ? ` [${w.status}]` : ''}
-                                </div>
+                            const isSelected = breakWinIdx === i
 
-                                {w.card ? (
-                                    <ResourceCardMini card={w.card} size="md" />
-                                ) : (
-                                    <div className="text-[10px] italic text-parchment-500">
-                                        Empty window
+                            return (
+                                <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() => setBreakWinIdx(i)}
+                                    className={`group flex flex-col items-center rounded-xl border-2 p-2 transition-all text-left ${isSelected
+                                            ? 'bg-red-600/20 border-red-400 ring-2 ring-red-300/40'
+                                            : 'bg-ink-800/70 border-parchment-700/30 hover:border-red-400/70'
+                                        }`}
+                                >
+                                    <div className={`mb-2 w-full text-center text-[11px] font-bold ${isSelected ? 'text-red-100' : 'text-parchment-300'
+                                        }`}>
+                                        Window {i + 1}
+                                        {w.status !== 'normal' ? ` · ${w.status}` : ''}
                                     </div>
-                                )}
-                            </button>
-                        )
-                    })}
+
+                                    <div className="flex min-h-[176px] w-full items-center justify-center">
+                                        {w.card ? (
+                                            <ResourceCardMini
+                                                card={w.card}
+                                                size="xl"
+                                                selected={isSelected}
+                                            />
+                                        ) : (
+                                            <div className="flex h-[176px] w-[120px] items-center justify-center rounded-lg border border-dashed border-parchment-700/40 bg-ink-900/60 text-center text-[10px] italic text-parchment-500">
+                                                Empty
+                                            </div>
+                                        )}
+                                    </div>
+                                </button>
+                            )
+                        })}
+                    </div>
                 </div>
               )}
             </>
