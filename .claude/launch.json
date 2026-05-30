@@ -3,9 +3,15 @@
   "configurations": [
     {
       "name": "shopkeeper-showdown",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".claude/worktrees/v0.6-ui-fixes/node_modules/vite/bin/vite.js", "--root", ".claude/worktrees/v0.6-ui-fixes", "--port", "5173"],
       "port": 5173
+    },
+    {
+      "name": "shopkeeper-v0.6",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".claude/worktrees/v0.6-ui-fixes/node_modules/vite/bin/vite.js", "--root", ".claude/worktrees/v0.6-ui-fixes", "--port", "5174", "--host"],
+      "port": 5174
     }
   ]
 }
