@@ -84,6 +84,7 @@ export default function App() {
   if (mode === 'playing-online') {
     return <Game
       localPlayerName={roomInfo?.playerName}
+      roomId={roomInfo?.roomId}
       onLeave={() => { setRoomInfo(null); setMode('home') }}
     />
   }

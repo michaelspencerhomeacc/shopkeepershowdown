@@ -1124,13 +1124,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         // Monks always stay at 0.
         return p.classId === 'monk' ? { ...p, activeTokens: 0 } : p
       })
-      // Reopen rn03 round-shuttered windows and reset rn04 reroll availability
+      // Reset rn04 reroll availability (rn03 roundShuttered windows reopen at turn start, not here)
       const playersWithReopened = updatedPlayers.map(p => ({
         ...p,
         rn04RerollUsed: false,
-        windows: p.windows.map(w =>
-          w.roundShuttered ? { ...w, status: 'normal' as const, roundShuttered: false } : w
-        ),
       }))
       return {
         round: newRound,
@@ -1582,8 +1579,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       players: s.players.map(p => {
         if (p.id !== playerId) return p
         const withWindows = { ...p, windows: p.windows.map(w => ({ ...w, status: 'normal' as WindowStatus })) }
-        // +1 rep of chosen type from the Barracks repair action itself
-        const withRepType = repType ? { ...withWindows, rep: { ...withWindows.rep, [repType]: withWindows.rep[repType] + 1 } } : withWindows
+        // +1 rep of chosen type — Paladin only (only Paladins gain Rep from repairing)
+        const withRepType = (repType && p.classId === 'paladin') ? { ...withWindows, rep: { ...withWindows.rep, [repType]: withWindows.rep[repType] + 1 } } : withWindows
         // rn03: additional CON rep per window repaired
         const withRn03 = rn03 && brokenCount > 0 ? { ...withRepType, rep: { ...withRepType.rep, CON: withRepType.rep.CON + brokenCount } } : withRepType
         const withDraw = draw ? { ...withRn03, hoard: [...withRn03.hoard, ...draw.drawn] } : withRn03
@@ -1593,7 +1590,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       resourceDiscard: draw ? draw.discard : s.resourceDiscard,
       actionLog: [logEntry(
         `${player.name} repaired all windows.` +
-        (repType && brokenCount > 0 ? ` Gained 1 ${repType} rep.` : '') +
+        (repType && brokenCount > 0 && player.classId === 'paladin' ? ` Gained 1 ${repType} rep.` : '') +
         (rn03 && brokenCount > 0 ? ` Gates of Mirhollow — +${brokenCount} CON Rep.` : '') +
         (draw && draw.drawn.length > 0 ? ` Mercy of Thornwall — drew ${draw.drawn.map(c => c.name).join(', ')}.` : ''),
         playerId
@@ -2991,7 +2988,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             )}
             return closedCount > 0 ? { ...withShutter, rep: { ...withShutter.rep, CON: withShutter.rep.CON + closedCount } } : withShutter
           })
-          logMsg += `Gates of Mirhollow — closed ${closedCount} window(s) until next round, +${closedCount} CON Rep.`
+          logMsg += `Gates of Mirhollow — closed ${closedCount} window(s) until your next turn, +${closedCount} CON Rep.`
           break
         }
         case 'rn04': { // All players discard 1 resource of Paladin's choice
@@ -3140,14 +3137,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       )
 
     // Helper: unshutter windows 0 and 4 (turn-mechanic windows) for the player whose turn is starting.
-    // rn03 roundShuttered windows are NOT reopened here — they reopen at nextRound().
+    // rn03 roundShuttered windows also reopen here — they last until the player's own next turn.
     const unshutterStartingPlayer = (allPlayers: typeof players, startingId: string) =>
       allPlayers.map(p =>
         p.id !== startingId ? p : {
           ...p,
           windows: p.windows.map((w, i) =>
-            (i === 0 || i === 4) && w.status === 'shuttered' && !w.roundShuttered
-              ? { ...w, status: 'normal' as const }
+            (i === 0 || i === 4) && w.status === 'shuttered'
+              ? { ...w, status: 'normal' as const, roundShuttered: false }
               : w
           ),
         }

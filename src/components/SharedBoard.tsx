@@ -49,6 +49,20 @@ interface SharedBoardProps {
   localPlayerName?: string
 }
 
+/** Returns coin-token image paths whose denominations sum to `amount` (greedy, capped at 5). */
+function coinTokenImages(amount: number): string[] {
+  const denoms = [50, 20, 10, 5, 3, 1] as const
+  const imgs: string[] = []
+  let remaining = amount
+  for (const d of denoms) {
+    while (remaining >= d && imgs.length < 5) {
+      imgs.push(`/cards/tokens/${d} Coin.png`)
+      remaining -= d
+    }
+  }
+  return imgs
+}
+
 export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps) {
   const {
     players, pawns, movePawn,
@@ -108,10 +122,14 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     // initialise from current state so we don't fire on first render
     players.find(p => p.hasNightWatcher)?.id ?? null
   )
-  // Passive coin gain toast (e.g. rn06, rn09, barbarian passive)
+  // "Your Turn" toast — shown to the local player when their turn begins
+  const [yourTurnToast, setYourTurnToast] = useState(false)
+  // Coin gain toast — shown whenever a player gains coins
   const [passiveCoinToast, setPassiveCoinToast] = useState<{
     playerName: string; playerClassId: string; amount: number; source: string
   } | null>(null)
+  // Separate log-id ref for coin toast (avoids sharing state with steal-toast ref)
+  const prevCoinLogRef = useRef<string | null>(null)
   // Clan toll gate: set before opening the action panel; null = no gate active
   const [clanGate, setClanGate] = useState<{ barbarianId: string; location: Location } | null>(null)
   // Clan toll is committed only when the player completes an action, not when they open the panel
@@ -234,27 +252,37 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     return () => clearTimeout(t)
   }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Passive coin toast: fire when a passive ability grants coins (rn06, rn09, Fearsome Champion, etc.)
+  // Coin gain toast: fires whenever a player gains coins from any source.
+  // Uses its own ref (prevCoinLogRef) to avoid conflicts with the steal-toast ref.
   useEffect(() => {
     if (actionLog.length === 0) return
     const latest = actionLog[0]
-    if (latest.id === prevLogIdRef.current) return  // already seen
+    if (latest.id === prevCoinLogRef.current) return
+    prevCoinLogRef.current = latest.id
     const msg = latest.message
-    // Detect known passive coin gain patterns
-    const passivePatterns = [
-      { re: /Reckoning at Duskreach.*gained (\d+) coin/i,       source: 'Reckoning at Duskreach' },
-      { re: /Shadow of Vel'sha.*gained (\d+) coin/i,            source: "Shadow of Vel'sha" },
-      { re: /Fearsome Champion.*gained (\d+) coin/i,             source: 'Fearsome Champion' },
-      { re: /Merchant of Saltholm.*\+(\d+) coins/i,              source: 'Merchant of Saltholm' },
+    // Skip entries that have dedicated overlays or represent outgoing coins
+    if (/\bstole\b/i.test(msg) || msg.includes('Night Watcher')) return
+    if (/\bpaid\b.+\bcoins?\b/i.test(msg) || /\btoll\b/i.test(msg)) return
+    if (/\bsold\b/i.test(msg) || msg.includes('Sell Phase') || msg.includes('final sell')) return
+
+    const coinPatterns: Array<{ re: RegExp; source: string }> = [
+      { re: /Reckoning at Duskreach.*gained (\d+) coin/i,   source: 'Reckoning at Duskreach' },
+      { re: /Shadow of Vel'sha.*gained (\d+) coin/i,        source: "Shadow of Vel'sha" },
+      { re: /Fearsome Champion.*gained (\d+) coin/i,         source: 'Fearsome Champion' },
+      { re: /Merchant of Saltholm.*?\+(\d+) coin/i,          source: 'Merchant of Saltholm' },
+      { re: /gained (\d+) coins?/i,                          source: '' },
+      { re: /earned (\d+) coins?/i,                          source: '' },
     ]
-    for (const { re, source } of passivePatterns) {
+    for (const { re, source } of coinPatterns) {
       const m = msg.match(re)
       if (!m) continue
       const amount = parseInt(m[1], 10)
+      if (amount <= 0) continue
       const recipient = latest.playerId ? players.find(p => p.id === latest.playerId) : null
       if (!recipient) continue
-      setPassiveCoinToast({ playerName: recipient.name, playerClassId: recipient.classId, amount, source })
-      const t = setTimeout(() => setPassiveCoinToast(null), 3500)
+      const displaySource = source || (msg.length > 60 ? msg.slice(0, 58) + '…' : msg)
+      setPassiveCoinToast({ playerName: recipient.name, playerClassId: recipient.classId, amount, source: displaySource })
+      const t = setTimeout(() => setPassiveCoinToast(null), 4000)
       return () => clearTimeout(t)
     }
   }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -266,12 +294,18 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     setTimeout(() => setActivityFeed(prev => prev.filter(n => n.id !== id)), 3800)
   }
 
-  // Turn-change notification
+  // Turn-change notification + "Your Turn" toast
   useEffect(() => {
     if (!currentTurnPlayerId || currentTurnPlayerId === prevTurnRef.current) return
     prevTurnRef.current = currentTurnPlayerId
     const player = players.find(p => p.id === currentTurnPlayerId)
     if (player) pushActivity(`✨ ${player.name}'s turn`)
+    // Show prominent "Your Turn" banner only for the local player
+    if (localPlayerName && player?.name === localPlayerName) {
+      setYourTurnToast(true)
+      const t = setTimeout(() => setYourTurnToast(false), 3000)
+      return () => clearTimeout(t)
+    }
   }, [currentTurnPlayerId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Action log → activity feed
@@ -361,7 +395,18 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         </div>
       )}
 
-      {/* Top-centre notification stack — steal toast + Night Watcher toast + passive coin toast */}
+      {/* "Your Turn" toast — prominent banner for the local player */}
+      {yourTurnToast && (
+        <div className="fixed top-16 left-1/2 z-[592] pointer-events-none" style={{ transform: 'translateX(-50%)' }}>
+          <div className="your-turn-toast bg-green-900/95 border-2 border-green-400/90 rounded-2xl px-10 py-5 shadow-2xl shadow-green-900/60 text-center whitespace-nowrap">
+            <div className="text-3xl mb-1">⏱</div>
+            <div className="text-2xl font-display font-bold text-green-300">Your Turn!</div>
+            <div className="text-sm text-green-400/70 mt-0.5">Make your moves</div>
+          </div>
+        </div>
+      )}
+
+      {/* Top-centre notification stack — steal toast + Night Watcher toast + coin toast */}
       {(stealToast || nightWatcherToast || passiveCoinToast) && (
         <div className="fixed top-8 left-0 right-0 flex flex-col items-center gap-3 z-[590] pointer-events-none">
 
@@ -452,18 +497,34 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
             </div>
           )}
 
-          {/* Passive coin gain toast */}
+          {/* Coin gain toast */}
           {passiveCoinToast && (
             <div className="steal-toast bg-amber-950 border-2 border-amber-400 rounded-2xl px-6 py-4 shadow-2xl shadow-amber-900/50 flex items-center gap-4">
+              {/* Player avatar */}
               <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-amber-400/70 shadow-lg flex-shrink-0">
                 <img src={markerSrc(passiveCoinToast.playerClassId)} alt={passiveCoinToast.playerName} className="w-full h-full object-cover" />
               </div>
+              {/* Coin token stack */}
+              <div className="flex items-center flex-shrink-0">
+                {coinTokenImages(passiveCoinToast.amount).map((src, i) => (
+                  <div
+                    key={i}
+                    className="w-11 h-11 rounded-full overflow-hidden border-2 border-amber-300/80 shadow-lg"
+                    style={{ marginLeft: i > 0 ? -10 : 0, zIndex: i }}
+                  >
+                    <img src={src} alt="coin" className="w-full h-full object-cover" />
+                  </div>
+                ))}
+              </div>
+              {/* Text */}
               <div className="flex flex-col gap-0.5">
                 <div className="text-amber-300 font-display font-bold text-lg leading-tight">
-                  💰 +{passiveCoinToast.amount} coin{passiveCoinToast.amount !== 1 ? 's' : ''}
+                  +{passiveCoinToast.amount} coin{passiveCoinToast.amount !== 1 ? 's' : ''}
                 </div>
                 <div className="text-parchment-100 text-sm font-semibold">{passiveCoinToast.playerName}</div>
-                <div className="text-parchment-400 text-xs leading-snug">{passiveCoinToast.source}</div>
+                {passiveCoinToast.source && (
+                  <div className="text-parchment-400 text-xs leading-snug">{passiveCoinToast.source}</div>
+                )}
               </div>
             </div>
           )}
@@ -922,7 +983,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               players={players}
               onResolve={(discardIds) => resolveCallLightning(shamanCallLightning.shamanId, discardIds)}
             />
-          : <WaitingOverlay name={players.find(p => p.id === shamanCallLightning.targetId)?.name} action="responding to Call Lightning" />
+          : <WaitingOverlay name={players.find(p => p.id === shamanCallLightning.targetId)?.name} action="responding to Call Lightning" classId={players.find(p => p.id === shamanCallLightning.targetId)?.classId} />
       )}
 
       {/* Guildhall Negotiate — step 1: target chooses counter-card */}
@@ -934,7 +995,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               onCounter={counterNegotiate}
               onDecline={() => resolveNegotiate(false)}
             />
-          : <WaitingOverlay name={players.find(p => p.id === negotiatePending.targetId)?.name} action="choosing their counter-offer" />
+          : <WaitingOverlay name={players.find(p => p.id === negotiatePending.targetId)?.name} action="choosing their counter-offer" classId={players.find(p => p.id === negotiatePending.targetId)?.classId} />
       )}
 
       {/* Guildhall Negotiate — step 2: proposer reviews and accepts/declines */}
@@ -946,18 +1007,28 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               onAccept={() => resolveNegotiate(true)}
               onDecline={() => resolveNegotiate(false)}
             />
-          : <WaitingOverlay name={players.find(p => p.id === negotiateReview.proposerId)?.name} action="reviewing the counter-offer" />
+          : <WaitingOverlay name={players.find(p => p.id === negotiateReview.proposerId)?.name} action="reviewing the counter-offer" classId={players.find(p => p.id === negotiateReview.proposerId)?.classId} />
       )}
 
       {/* Last Stand at Greyveil (rn04) — reroll offer, only shown to the affected player */}
       {rn04RerollPending && isMe(rn04RerollPending.playerId) && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
           <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+            {/* Player portrait */}
+            <div className="flex justify-center">
+              <img
+                src={markerSrc(players.find(p => p.id === rn04RerollPending.playerId)?.classId ?? '')}
+                alt=""
+                className="w-16 h-16 rounded-full border-2 border-amber-400/60 object-cover shadow-lg shadow-amber-900/40"
+              />
+            </div>
             <div className="text-lg font-display font-bold text-amber-300">⚔ Last Stand at Greyveil</div>
             <div className="text-sm text-parchment-400">
-              {players.find(p => p.id === rn04RerollPending.playerId)?.name} rolled a{' '}
-              <span className="text-2xl align-middle">{'⚀⚁⚂⚃⚄⚅'[rn04RerollPending.originalRoll - 1]}</span>
-              <span className="text-parchment-200 font-bold ml-1">({rn04RerollPending.originalRoll})</span>
+              <span className="text-parchment-200 font-semibold">{players.find(p => p.id === rn04RerollPending.playerId)?.name}</span> rolled
+            </div>
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-[72px] leading-none select-none">{'⚀⚁⚂⚃⚄⚅'[rn04RerollPending.originalRoll - 1]}</span>
+              <span className="text-3xl font-bold font-display text-amber-200">({rn04RerollPending.originalRoll})</span>
             </div>
             {isMe(rn04RerollPending.playerId) ? (
               <>
@@ -987,14 +1058,34 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         return (
           <div className="fixed inset-0 z-[340] flex items-center justify-center bg-black/60">
             <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
-              <div className="text-lg font-display font-bold text-amber-300">🏹 Ambush Triggered!</div>
-              <div className="text-sm text-parchment-300">
-                {target?.name} visited{' '}
-                <span className="font-bold text-parchment-100">{LOCATIONS.find(l => l.id === ambushPending.location)?.label}</span>
-                {' '}— where <span className="font-bold text-amber-200">{rangerName}</span> placed a{' '}
-                <span className={`font-bold ${isBreak ? 'text-red-300' : 'text-amber-300'}`}>
-                  {isBreak ? '💥 Break' : '🤚 Steal'}
-                </span>{' '}Ambush.
+              {/* Portrait pair */}
+              <div className="flex items-center justify-center gap-4 mb-2">
+                <div className="flex flex-col items-center gap-1">
+                  <img
+                    src={markerSrc(players.find(p => p.id === ambushPending.rangerId)?.classId ?? '')}
+                    alt={rangerName}
+                    className="w-14 h-14 rounded-full border-2 border-amber-400/70 object-cover shadow-lg"
+                  />
+                  <span className="text-xs text-amber-300 font-semibold">{rangerName}</span>
+                </div>
+                <div className="flex flex-col items-center gap-0.5">
+                  <span className="text-2xl">🏹</span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${isBreak ? 'bg-red-900/60 text-red-300' : 'bg-amber-900/60 text-amber-300'}`}>
+                    {isBreak ? 'BREAK' : 'STEAL'}
+                  </span>
+                </div>
+                <div className="flex flex-col items-center gap-1">
+                  <img
+                    src={markerSrc(target?.classId ?? '')}
+                    alt={target?.name}
+                    className="w-14 h-14 rounded-full border-2 border-red-400/50 object-cover shadow-lg opacity-90"
+                  />
+                  <span className="text-xs text-parchment-300 font-semibold">{target?.name}</span>
+                </div>
+              </div>
+              <div className="text-lg font-display font-bold text-amber-300">Ambush Triggered!</div>
+              <div className="text-xs text-parchment-500 mt-0.5">
+                at <span className="text-parchment-300 font-semibold">{LOCATIONS.find(l => l.id === ambushPending.location)?.label}</span>
               </div>
 
               {isMe(ambushPending.rangerId) ? (
@@ -1052,9 +1143,15 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         return (
           <div className="fixed inset-0 z-[345] flex items-center justify-center bg-black/60">
             <div className="bg-ink-900 border-2 border-violet-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+              <div className="flex justify-center mb-1">
+                <div className="relative">
+                  <div className="absolute inset-[-4px] rounded-full animate-ping bg-violet-400/30" />
+                  <img src="/cards/tokens/The Night Watcher.png" alt="Night Watcher" className="relative w-20 h-20 rounded-full border-2 border-violet-400/80 object-cover shadow-lg shadow-violet-900/60" />
+                </div>
+              </div>
               <div className="text-lg font-display font-bold text-violet-300">🌙 Night Watcher</div>
               <div className="text-sm text-parchment-300">
-                Multiple players were affected. Choose who receives the Night Watcher token.
+                Multiple players were affected. Choose who receives the protection token.
               </div>
               {isMe(nightWatcherChoicePending.attackerId) ? (
                 <div className="flex flex-col gap-2">
@@ -1062,9 +1159,17 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                     <button
                       key={p.id}
                       onClick={() => assignNightWatcher(p.id)}
-                      className="btn-secondary text-sm px-3 py-1.5 w-full"
+                      className="flex items-center gap-3 w-full text-left rounded-xl border border-violet-700/40 bg-violet-950/30 hover:bg-violet-900/40 hover:border-violet-500/60 transition-all px-3 py-2"
                     >
-                      {p.name}
+                      <img
+                        src={markerSrc(p.classId)}
+                        alt={p.name}
+                        className="w-10 h-10 rounded-full border-2 border-violet-400/50 object-cover flex-shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-parchment-100">{p.name}</div>
+                        <div className="text-xs text-violet-300">Grant Night Watcher protection →</div>
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -1083,11 +1188,31 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       {trickShotPending && (isMe(trickShotPending.rangerId) || isMe(trickShotPending.targetPlayerId)) && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
           <div className="bg-ink-900 border-2 border-green-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+            {/* Portrait pair */}
+            <div className="flex items-center justify-center gap-4 mb-1">
+              <div className="flex flex-col items-center gap-1">
+                <img
+                  src={markerSrc(players.find(p => p.id === trickShotPending.rangerId)?.classId ?? '')}
+                  alt=""
+                  className="w-14 h-14 rounded-full border-2 border-green-400/70 object-cover shadow-lg"
+                />
+                <span className="text-xs text-green-300 font-semibold">{players.find(p => p.id === trickShotPending.rangerId)?.name}</span>
+              </div>
+              <div className="text-xl text-parchment-500">⚡</div>
+              <div className="flex flex-col items-center gap-1">
+                <img
+                  src={markerSrc(players.find(p => p.id === trickShotPending.targetPlayerId)?.classId ?? '')}
+                  alt=""
+                  className="w-14 h-14 rounded-full border-2 border-parchment-500/40 object-cover shadow-lg opacity-90"
+                />
+                <span className="text-xs text-parchment-300 font-semibold">{players.find(p => p.id === trickShotPending.targetPlayerId)?.name}</span>
+              </div>
+            </div>
             <div className="text-lg font-display font-bold text-green-300">⚡ Trick Shot</div>
-            <div className="text-sm text-parchment-300">
-              {players.find(p => p.id === trickShotPending.targetPlayerId)?.name} rolled{' '}
-              <span className="text-2xl align-middle">{'⚀⚁⚂⚃⚄⚅'[trickShotPending.originalRoll - 1]}</span>
-              <span className="text-parchment-200 font-bold ml-1">({trickShotPending.originalRoll})</span>
+            <div className="text-sm text-parchment-400">
+              <span className="text-parchment-200 font-semibold">{players.find(p => p.id === trickShotPending.targetPlayerId)?.name}</span> rolled{' '}
+              <span className="text-[48px] leading-none align-middle">{'⚀⚁⚂⚃⚄⚅'[trickShotPending.originalRoll - 1]}</span>
+              <span className="text-parchment-200 font-bold ml-1 text-xl">({trickShotPending.originalRoll})</span>
               {' '}for {trickShotPending.rollType}.
             </div>
             {isMe(trickShotPending.rangerId) ? (
@@ -1149,7 +1274,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               onLaunder={() => resolveTrickShotBonus('launder')}
               onBreak={(windowId) => resolveTrickShotBonus('break', windowId)}
             />
-          : <WaitingOverlay name={ranger?.name} action="choosing Trick Shot bonus" />
+          : <WaitingOverlay name={ranger?.name} action="choosing Trick Shot bonus" classId={ranger?.classId} />
       })()}
 
       {/* Ranger — Visitor Trade passive */}
@@ -1165,7 +1290,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               onTrade={(cardId, fleaIdx) => resolveRangerVisitorTrade(cardId, fleaIdx)}
               onSkip={dismissRangerVisitorTrade}
             />
-          : <WaitingOverlay name={ranger.name} action={`choosing Visitor Trade (${tradesRemaining} remaining)`} />
+          : <WaitingOverlay name={ranger.name} action={`choosing Visitor Trade (${tradesRemaining} remaining)`} classId={ranger.classId} />
       })()}
 
       {/* Town Crier picker — shown whenever townCrierPeek is active (Barracks action OR rn07 Paladin card) */}
@@ -1173,7 +1298,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         const crierPlayer = players.find(p => p.id === townCrierPeek.playerId)
         if (!crierPlayer) return null
         if (!isMe(townCrierPeek.playerId)) {
-          return <WaitingOverlay name={crierPlayer.name} action="placing a Town Crier visitor" />
+          return <WaitingOverlay name={crierPlayer.name} action="placing a Town Crier visitor" classId={crierPlayer.classId} />
         }
         return (
           <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
@@ -1299,7 +1424,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               onAccept={(tStake) => resolveRighteousDuel(true, tStake)}
               onDecline={(cardId) => resolveRighteousDuel(false, undefined, cardId)}
             />
-          : <WaitingOverlay name={players.find(p => p.id === righteousDuelPending.targetId)?.name} action="responding to Righteous Duel" />
+          : <WaitingOverlay name={players.find(p => p.id === righteousDuelPending.targetId)?.name} action="responding to Righteous Duel" classId={players.find(p => p.id === righteousDuelPending.targetId)?.classId} />
       )}
 
       {/* Paladin Righteous Duel result */}
@@ -1743,14 +1868,24 @@ function BarbarianClashOptOutOverlay({
       <div className="bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 max-h-[85vh] overflow-y-auto">
         {/* Header */}
         <div className="text-center mb-4">
-          <div className="text-xl font-display font-bold text-red-400">⚔ Clash incoming!</div>
-          <div className="text-sm text-parchment-500 capitalize mt-0.5">{loc?.label}</div>
-          <div className="text-sm text-amber-300 mt-2 font-semibold">
-            {barb?.name} is here (+2 to their roll).
+          {barb && (
+            <div className="flex justify-center mb-2">
+              <div className="relative">
+                <div className="absolute inset-[-4px] rounded-full animate-ping bg-red-500/30" />
+                <img
+                  src={markerSrc(barb.classId)}
+                  alt={barb.name}
+                  className="relative w-16 h-16 rounded-full border-2 border-red-500/70 object-cover shadow-lg shadow-red-900/50"
+                />
+              </div>
+            </div>
+          )}
+          <div className="text-xl font-display font-bold text-red-400">⚔ Clash Incoming!</div>
+          <div className="text-sm text-amber-300 mt-1 font-semibold">
+            {barb?.name} is at <span className="capitalize">{loc?.label}</span> (+2 to roll)
           </div>
-          <div className="text-sm text-parchment-400 mt-1">
-            Other players may pay 2 resources to make {barb?.name} retreat.
-            Payers sit out — {barb?.name} retreats and keeps the resources.
+          <div className="text-sm text-parchment-400 mt-1.5 leading-relaxed">
+            Pay 2 resources to make them retreat — or fight it out.
           </div>
         </div>
 
@@ -1780,10 +1915,15 @@ function BarbarianClashOptOutOverlay({
             return (
               <div key={id} className="rounded-lg border border-parchment-700/30 overflow-hidden">
                 {/* Player row */}
-                <div className={`flex items-center justify-between px-3 py-2 ${
+                <div className={`flex items-center gap-2 px-3 py-2 ${
                   paying ? 'bg-amber-900/40' : fighting ? 'bg-red-900/20' : 'bg-ink-800'
                 }`}>
-                  <span className="text-sm font-semibold text-parchment-200">{player.name}</span>
+                  <img
+                    src={markerSrc(player.classId)}
+                    alt={player.name}
+                    className="w-8 h-8 rounded-full border border-parchment-600/40 object-cover flex-shrink-0"
+                  />
+                  <span className="text-sm font-semibold text-parchment-200 flex-1 min-w-0 truncate">{player.name}</span>
                   <div className="flex items-center gap-2">
                     {decided ? (
                       // Already submitted — show result to everyone
@@ -2337,16 +2477,35 @@ function RighteousDuelChallengeModal({
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/70 p-3">
       <div className="bg-ink-900 border-2 border-gold-500/60 rounded-xl p-4 shadow-2xl w-full max-w-sm mx-auto max-h-[90vh] overflow-y-auto">
         <div className="text-center mb-4">
-          <div className="text-xl font-display font-bold text-gold-300">⚔ Righteous Duel!</div>
-          <div className="text-sm text-parchment-300 mt-0.5">
-            <span className="text-parchment-100 font-semibold">{challenger.name}</span> challenges{' '}
-            <span className="text-parchment-100 font-semibold">{target.name}</span>
-          </div>
-          {bonus > 0 && (
-            <div className="text-sm text-gold-400 mt-1">
-              {challenger.name} rolls with +{bonus} bonus ({bonus} Renown card{bonus !== 1 ? 's' : ''})
+          {/* Challenger vs Target portraits */}
+          <div className="flex items-center justify-center gap-4 mb-3">
+            <div className="flex flex-col items-center gap-1">
+              <div className="relative">
+                <div className="absolute inset-[-4px] rounded-full animate-ping bg-gold-400/30" />
+                <img
+                  src={markerSrc(challenger.classId)}
+                  alt={challenger.name}
+                  className="relative w-16 h-16 rounded-full border-2 border-gold-400/80 object-cover shadow-lg shadow-gold-900/50"
+                />
+              </div>
+              <span className="text-xs text-gold-300 font-semibold mt-0.5">{challenger.name}</span>
+              {bonus > 0 && <span className="text-[10px] text-gold-400">+{bonus} bonus</span>}
             </div>
-          )}
+            <div className="flex flex-col items-center gap-0.5">
+              <span className="text-2xl">⚔</span>
+              <span className="text-xs text-parchment-500 font-bold tracking-wider">VS</span>
+            </div>
+            <div className="flex flex-col items-center gap-1">
+              <img
+                src={markerSrc(target.classId)}
+                alt={target.name}
+                className="w-16 h-16 rounded-full border-2 border-parchment-500/50 object-cover shadow-lg"
+              />
+              <span className="text-xs text-parchment-200 font-semibold mt-0.5">{target.name}</span>
+              <span className="text-[10px] text-parchment-500">Challenged</span>
+            </div>
+          </div>
+          <div className="text-xl font-display font-bold text-gold-300">Righteous Duel!</div>
         </div>
 
         {/* Challenger's stake */}
@@ -2790,12 +2949,31 @@ function RighteousDuelModal({
 // ---- Waiting helpers ----
 
 /** Full-screen overlay shown to players who are NOT the one acting on an interrupt. */
-function WaitingOverlay({ name, action }: { name?: string; action: string }) {
+function WaitingOverlay({ name, action, classId }: { name?: string; action: string; classId?: string }) {
   return (
     <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
-      <div className="bg-ink-900 border-2 border-parchment-700/40 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
-        <div className="text-xl animate-pulse">⏳</div>
-        <WaitingBadge name={name} action={action} />
+      <div className="bg-ink-900 border-2 border-parchment-700/40 rounded-2xl p-6 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+        {classId ? (
+          <div className="flex justify-center">
+            <div className="relative">
+              <div className="absolute inset-[-6px] rounded-full animate-ping bg-parchment-400/20" />
+              <img
+                src={markerSrc(classId)}
+                alt={name}
+                className="relative w-20 h-20 rounded-full border-2 border-parchment-500/40 object-cover shadow-lg"
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="text-4xl animate-pulse">⏳</div>
+        )}
+        <div>
+          <div className="text-base font-display font-semibold text-parchment-100">{name ?? '…'}</div>
+          <div className="text-sm text-parchment-400 mt-0.5">is {action}…</div>
+        </div>
+        <div className="w-24 h-1 mx-auto rounded-full bg-parchment-700/30 overflow-hidden">
+          <div className="h-full bg-gold-400/60 rounded-full animate-[progress_2s_ease-in-out_infinite]" style={{ width: '60%' }} />
+        </div>
       </div>
     </div>
   )
@@ -2804,8 +2982,13 @@ function WaitingOverlay({ name, action }: { name?: string; action: string }) {
 /** Inline waiting message — used inside modals that already have their own container. */
 function WaitingBadge({ name, action }: { name?: string; action: string }) {
   return (
-    <div className="text-base text-parchment-400 animate-pulse">
-      Waiting for <span className="font-semibold text-gold-300">{name ?? '...'}</span> — {action}
+    <div className="flex items-center justify-center gap-2 py-1">
+      <div className="w-1.5 h-1.5 rounded-full bg-gold-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+      <div className="w-1.5 h-1.5 rounded-full bg-gold-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+      <div className="w-1.5 h-1.5 rounded-full bg-gold-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+      <span className="text-sm text-parchment-400 ml-1">
+        Waiting for <span className="font-semibold text-gold-300">{name ?? '…'}</span> — {action}
+      </span>
     </div>
   )
 }
@@ -2840,13 +3023,32 @@ function ShamanCallLightningModal({
     <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
       <div className="bg-ink-900 border-2 border-blue-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4 max-h-[85vh] overflow-y-auto">
         <div className="text-center mb-4">
-          <div className="text-xl font-display font-bold text-blue-400">⚡ Call Lightning!</div>
-          <div className="text-sm text-parchment-400 mt-1">
-            <span className="text-parchment-200 font-semibold">{shaman.name}</span> struck{' '}
-            <span className="text-parchment-200 font-semibold">{target.name}</span> with lightning.
+          {/* Portrait pair: shaman strikes target */}
+          <div className="flex items-center justify-center gap-4 mb-3">
+            <div className="flex flex-col items-center gap-1">
+              <div className="relative">
+                <div className="absolute inset-[-4px] rounded-full animate-ping bg-blue-400/30" />
+                <img
+                  src={markerSrc(shaman.classId)}
+                  alt={shaman.name}
+                  className="relative w-16 h-16 rounded-full border-2 border-blue-400/80 object-cover shadow-lg shadow-blue-900/50"
+                />
+              </div>
+              <span className="text-xs text-blue-300 font-semibold mt-1">{shaman.name}</span>
+            </div>
+            <div className="text-3xl animate-pulse">⚡</div>
+            <div className="flex flex-col items-center gap-1">
+              <img
+                src={markerSrc(target.classId)}
+                alt={target.name}
+                className="w-16 h-16 rounded-full border-2 border-red-400/50 object-cover shadow-lg opacity-80"
+              />
+              <span className="text-xs text-parchment-300 mt-1">{target.name}</span>
+            </div>
           </div>
+          <div className="text-xl font-display font-bold text-blue-400">⚡ Call Lightning!</div>
           <div className="text-sm text-parchment-500 mt-1">
-            {target.name}: choose {needed} resource{needed !== 1 ? 's' : ''} to discard.
+            {target.name}: choose <span className="text-parchment-200 font-semibold">{needed} resource{needed !== 1 ? 's' : ''}</span> to discard.
           </div>
         </div>
 
@@ -2913,39 +3115,66 @@ function TrickShotBonusModal({
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
       <div className="bg-ink-900 border-2 border-green-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 space-y-3">
         <div className="text-center">
-          <div className="text-lg font-display font-bold text-green-300">⚡ Trick Shot Bonus</div>
-          <div className="text-sm text-parchment-400 mt-1">
-            {ranger?.name} — the re-roll was equal or lower. Choose your bonus:
-          </div>
-        </div>
-        <div className="space-y-1.5">
-          <label className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded border ${choice === 'launder' ? 'bg-blue-900/30 border-blue-600/40' : 'border-parchment-800/30'}`}>
-            <input type="radio" name="tsbChoice" checked={choice === 'launder'} onChange={() => setChoice('launder')} className="accent-blue-500" />
-            <span className="text-sm font-semibold text-parchment-300">Launder 1 — draw 1 resource blind</span>
-          </label>
-          <label className={`flex items-center gap-2 cursor-pointer px-2 py-1.5 rounded border ${choice === 'break' ? 'bg-red-900/30 border-red-600/40' : 'border-parchment-800/30'}`}>
-            <input type="radio" name="tsbChoice" checked={choice === 'break'} onChange={() => setChoice('break')} className="accent-red-500" />
-            <span className="text-sm font-semibold text-parchment-300">Break 1 window for a player you didn't target</span>
-          </label>
-          {choice === 'break' && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {breakableWindows.map(w => (
-                <button
-                  key={w.windowId}
-                  type="button"
-                  onClick={() => setSelectedWindowId(w.windowId)}
-                  className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
-                    selectedWindowId === w.windowId
-                      ? 'bg-red-600/30 border-red-400 text-red-200'
-                      : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                  }`}
-                >
-                  {w.playerName} · Win {w.idx + 1}
-                </button>
-              ))}
+          {ranger && (
+            <div className="flex justify-center mb-2">
+              <img
+                src={markerSrc(ranger.classId)}
+                alt={ranger.name}
+                className="w-14 h-14 rounded-full border-2 border-green-400/60 object-cover shadow-lg"
+              />
             </div>
           )}
+          <div className="text-lg font-display font-bold text-green-300">⚡ Trick Shot Bonus</div>
+          <div className="text-sm text-parchment-400 mt-1">
+            <span className="text-parchment-200 font-semibold">{ranger?.name}</span> — re-roll was equal or lower. Choose your bonus:
+          </div>
         </div>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setChoice('launder')}
+            className={`p-3 rounded-xl border-2 transition-all text-center ${
+              choice === 'launder'
+                ? 'bg-blue-900/40 border-blue-400 shadow-md shadow-blue-900/40'
+                : 'border-parchment-700/30 bg-ink-800/60 hover:border-blue-500/50 hover:bg-blue-950/30'
+            }`}
+          >
+            <div className="text-3xl mb-1">🎴</div>
+            <div className="text-sm font-bold text-parchment-100">Launder 1</div>
+            <div className="text-xs text-parchment-400 mt-0.5 leading-snug">Draw 1 resource blind from the deck</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => setChoice('break')}
+            className={`p-3 rounded-xl border-2 transition-all text-center ${
+              choice === 'break'
+                ? 'bg-red-900/40 border-red-400 shadow-md shadow-red-900/40'
+                : 'border-parchment-700/30 bg-ink-800/60 hover:border-red-500/50 hover:bg-red-950/30'
+            }`}
+          >
+            <div className="text-3xl mb-1">💥</div>
+            <div className="text-sm font-bold text-parchment-100">Break 1</div>
+            <div className="text-xs text-parchment-400 mt-0.5 leading-snug">Smash a window (not your target)</div>
+          </button>
+        </div>
+        {choice === 'break' && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {breakableWindows.map(w => (
+              <button
+                key={w.windowId}
+                type="button"
+                onClick={() => setSelectedWindowId(w.windowId)}
+                className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
+                  selectedWindowId === w.windowId
+                    ? 'bg-red-600/30 border-red-400 text-red-200'
+                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
+                }`}
+              >
+                {w.playerName} · Win {w.idx + 1}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           onClick={confirm}
           disabled={!choice || (choice === 'break' && !selectedWindowId)}

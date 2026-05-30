@@ -66,21 +66,21 @@ export function MultiplayerLobby({ onRoomJoined, onBack }: Props) {
           <>
             <button
               onClick={() => setMode('create')}
-              className="btn-primary w-full py-4 text-base"
+              className="btn-primary w-full py-4 text-lg"
             >
               🏠 Create Game
             </button>
             <button
               onClick={() => setMode('join')}
-              className="btn-secondary w-full py-4 text-base"
+              className="btn-secondary w-full py-4 text-lg"
             >
               🚪 Join Game
             </button>
             <button
               onClick={onBack}
-              className="w-full text-sm text-parchment-500 hover:text-parchment-300 transition-colors"
+              className="w-full text-base text-parchment-500 hover:text-parchment-300 transition-colors"
             >
-              ← Back to local play
+              Back to local play
             </button>
           </>
         )}
@@ -95,7 +95,7 @@ export function MultiplayerLobby({ onRoomJoined, onBack }: Props) {
                 onChange={e => setName(e.target.value)}
                 placeholder="Enter your name"
                 maxLength={20}
-                className="w-full bg-ink-900/60 border border-parchment-800/40 rounded-lg px-3 py-2.5 text-sm text-parchment-100 placeholder-parchment-600 focus:outline-none focus:border-gold-500/60"
+                className="w-full bg-ink-900/60 border border-parchment-800/40 rounded-lg px-3 py-3 text-base text-parchment-100 placeholder-parchment-600 focus:outline-none focus:border-gold-500/60"
                 autoFocus
               />
             </div>
@@ -108,13 +108,13 @@ export function MultiplayerLobby({ onRoomJoined, onBack }: Props) {
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value.toUpperCase())}
                   placeholder="e.g. IRON-WOLF-3"
-                  className="w-full bg-ink-900/60 border border-parchment-800/40 rounded-lg px-3 py-2.5 text-sm text-parchment-100 placeholder-parchment-600 focus:outline-none focus:border-gold-500/60 tracking-widest font-mono"
+                  className="w-full bg-ink-900/60 border border-parchment-800/40 rounded-lg px-3 py-3 text-base text-parchment-100 placeholder-parchment-600 focus:outline-none focus:border-gold-500/60 tracking-widest font-mono"
                 />
               </div>
             )}
 
             {error && (
-              <div className="text-sm text-red-400 bg-red-900/20 border border-red-800/40 rounded-lg px-3 py-2">
+              <div className="text-base text-red-400 bg-red-900/20 border border-red-800/40 rounded-lg px-3 py-2.5">
                 {error}
               </div>
             )}
@@ -122,14 +122,14 @@ export function MultiplayerLobby({ onRoomJoined, onBack }: Props) {
             <div className="flex gap-3 pt-1">
               <button
                 onClick={() => { setMode('choose'); setError(null) }}
-                className="btn-secondary flex-1 py-2.5 text-sm"
+                className="btn-secondary flex-1 py-3 text-base"
               >
-                ← Back
+                Back
               </button>
               <button
                 onClick={mode === 'create' ? handleCreate : handleJoin}
                 disabled={busy || !name.trim() || (mode === 'join' && !joinCode.trim())}
-                className="btn-primary flex-1 py-2.5 text-sm disabled:opacity-50"
+                className="btn-primary flex-1 py-3 text-base disabled:opacity-50"
               >
                 {busy ? 'Connecting...' : mode === 'create' ? 'Create Room' : 'Join Room'}
               </button>

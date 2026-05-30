@@ -87,3 +87,17 @@ export async function startRoom(roomId: string) {
     .update({ status: 'playing' })
     .eq('id', roomId)
 }
+
+export async function closeRoom(roomId: string) {
+  return supabase
+    .from('rooms')
+    .update({ status: 'closed' })
+    .eq('id', roomId)
+}
+
+export async function abandonRoom(roomId: string) {
+  return supabase
+    .from('rooms')
+    .update({ status: 'abandoned' })
+    .eq('id', roomId)
+}
