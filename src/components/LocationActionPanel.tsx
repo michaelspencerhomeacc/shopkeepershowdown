@@ -82,7 +82,7 @@ export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
   'thieves-guild': [
     { id: 'steal-or-break', label: 'Steal 1 or Break 1', icon: '🗡️', description: "Target another player's window." },
     { id: 'fence',          label: 'Fence',               icon: '💎', description: 'Secretly sell a stolen resource.' },
-    { id: 'launder',        label: 'Launder 2',           icon: '🌀', description: 'Convert 2 stolen cards into coins and Reputation.' },
+    { id: 'launder',        label: 'Launder 2',           icon: '🌀', description: 'Draw2 Resource cards and mark them as Stolen.' },
   ],
 }
 
@@ -1921,23 +1921,47 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
                 <div className="text-xs text-parchment-500 italic">All breakable windows are shuttered</div>
               ) : (
                 <div className="flex flex-wrap gap-1">
-                  {targetPlayer.windows.map((w, i) => {
-                    if (w.status === 'shuttered') return null
-                    return (
-                      <button
-                        key={w.id}
-                        type="button"
-                        onClick={() => setBreakWinIdx(i)}
-                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                          breakWinIdx === i
-                            ? 'bg-red-600/30 border-red-400 text-red-200'
-                            : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                        }`}
-                      >
-                        Win {i + 1}{w.card ? ` · ${w.card.name}` : ''}{w.status !== 'normal' ? ` [${w.status}]` : ''}
-                      </button>
-                    )
-                  })}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {targetPlayer.windows.map((w, i) => {
+                            if (w.status === 'shuttered') return null
+
+                            const isSelected = breakWinIdx === i
+
+                            return (
+                                <button
+                                    key={i}
+                                    type="button"
+                                    onClick={() => setBreakWinIdx(i)}
+                                    className={`flex flex-col items-stretch rounded-xl border-2 p-1.5 transition-all ${isSelected
+                                            ? 'border-red-400 bg-red-950/40 ring-2 ring-red-300/50'
+                                            : 'border-parchment-700/30 bg-ink-900/70 hover:border-red-400/70'
+                                        }`}
+                                >
+                                    <div
+                                        className={`pb-1 text-center text-[11px] font-bold ${isSelected ? 'text-red-100' : 'text-gold-300'
+                                            }`}
+                                    >
+                                        Window {i + 1}
+                                        {w.status !== 'normal' ? ` · ${w.status}` : ''}
+                                    </div>
+
+                                    {w.card ? (
+                                        <div className="pointer-events-none flex w-full justify-center">
+                                            <ResourceCardMini
+                                                card={w.card}
+                                                size="xl"
+                                                selected={isSelected}
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="flex h-[176px] w-full items-center justify-center rounded-lg border border-dashed border-parchment-700/40 bg-ink-950/70 text-center text-[10px] italic text-parchment-500">
+                                            Empty
+                                        </div>
+                                    )}
+                                </button>
+                            )
+                        })}
+                    </div>
                 </div>
               )}
             </>
