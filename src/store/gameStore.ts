@@ -2625,46 +2625,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       logs.push(`Repair window ${windowIdx + 1}`)
     }
 
-if (effects.trade1) {
-  const { playerCardId, fleaSlotIdx } = effects.trade1
-  const shamPlayer = updatedPlayers.find(p => p.id === playerId)
-  const fleaCard = flea[fleaSlotIdx]
-
-  const hoardCard = shamPlayer?.hoard.find(c => c.id === playerCardId)
-  const windowIdx = shamPlayer?.windows.findIndex(
-    w => w.card?.id === playerCardId && w.status !== 'broken'
-  ) ?? -1
-  const windowCard = windowIdx >= 0 ? shamPlayer?.windows[windowIdx]?.card : null
-
-  const playerCard = hoardCard ?? windowCard
-
-  if (playerCard) {
-    flea = flea.map((c, i) => i === fleaSlotIdx ? playerCard : c)
-
-    updatedPlayers = updatedPlayers.map(p => {
-      if (p.id !== playerId) return p
-
-      if (hoardCard) {
-        const newHoard = p.hoard.filter(c => c.id !== playerCardId)
-        return {
-          ...p,
-          hoard: fleaCard ? [...newHoard, fleaCard] : newHoard,
-        }
+    if (effects.trade1) {
+      const { playerCardId, fleaSlotIdx } = effects.trade1
+      const shamPlayer = updatedPlayers.find(p => p.id === playerId)
+      const playerCard = shamPlayer?.hoard.find(c => c.id === playerCardId)
+      const fleaCard = flea[fleaSlotIdx]
+      if (playerCard) {
+        flea = flea.map((c, i) => i === fleaSlotIdx ? playerCard : c)
+        updatedPlayers = updatedPlayers.map(p => {
+          if (p.id !== playerId) return p
+          const newHoard = p.hoard.filter(c => c.id !== playerCardId)
+          return { ...p, hoard: fleaCard ? [...newHoard, fleaCard] : newHoard }
+        })
+        logs.push('Trade 1')
       }
-
-      return {
-        ...p,
-        windows: p.windows.map((w, i) =>
-          i === windowIdx
-            ? { ...w, card: fleaCard ?? null, stolen: false }
-            : w
-        ),
-      }
-    })
-
-    logs.push('Trade 1')
-  }
-}
+    }
 
     set(s => ({
       players: updatedPlayers,

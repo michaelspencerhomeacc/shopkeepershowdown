@@ -498,14 +498,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
       }
       if (chosenEffectCount >= patienceSlots) return prev
       if (key === 'draw1') return { ...prev, draw1: true }
-        if (key === 'repair1') {
-            const firstBrokenIdx = brokenWindows[0]?.i
-
-            if (firstBrokenIdx === undefined) return prev
-
-            setPatienceRepairIdx(firstBrokenIdx)
-            return { ...prev, repair1: { windowIdx: firstBrokenIdx } }
-        }
+      if (key === 'repair1') return { ...prev, repair1: { windowIdx: patienceRepairIdx } }
       if (key === 'trade1') return { ...prev, trade1: { playerCardId: patienceTradeCardId, fleaSlotIdx: patienceTradeFleaIdx } }
       if (key === 'forage2' && !canPatienceForage) return prev
       if (key === 'forage2') return { ...prev, forage2: true }
@@ -517,15 +510,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
     // Rebuild effects with latest UI values
     const built: ShamanPatienceEffects = {}
     if (patienceEffects.draw1) built.draw1 = true
-      if (patienceEffects.repair1 !== undefined) {
-          const repairIdx = brokenWindows.some(({ i }) => i === patienceRepairIdx)
-              ? patienceRepairIdx
-              : brokenWindows[0]?.i
-
-          if (repairIdx !== undefined) {
-              built.repair1 = { windowIdx: repairIdx }
-          }
-      }
+    if (patienceEffects.repair1 !== undefined) built.repair1 = { windowIdx: patienceRepairIdx }
     const tradeableCards = [...player.hoard, ...player.windows.flatMap((w, wi) => w.card && w.status !== 'broken' ? [w.card] : [])]
     if (patienceEffects.trade1 !== undefined) built.trade1 = { playerCardId: patienceTradeCardId || tradeableCards[0]?.id || '', fleaSlotIdx: patienceTradeFleaIdx }
     if (patienceEffects.forage2 && canPatienceForage) built.forage2 = true
@@ -943,7 +928,7 @@ function repBtnCls(rt: RepType, selected: boolean) {
 
 function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTurn: boolean }) {
   const {
-      players, fleaMarket, initiateRighteousDuel, talesOfOld, spendActiveToken, classAbilitiesUsedThisTurn,
+    players, fleaMarket, initiateRighteousDuel, talesOfOld, classAbilitiesUsedThisTurn,
     proposeNegotiate, negotiatesCompletedThisTurn, negotiatePending,
   } = useGameStore()
 
@@ -1000,9 +985,6 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
     if (cardId === 'rn05') opts.rn05RepType = rn05RepType
     if (cardId === 'rn06') { opts.rn06TargetId = rn06Target || otherPlayers[0]?.id || ''; opts.rn06CardIds = rn06Cards }
     if (cardId === 'rn08') { opts.giveTargetId = rn08Target || otherPlayers[0]?.id || ''; opts.giveCardId = rn08Card || player.hoard[0]?.id || '' }
-    if (player.activeTokens < 1) return
-
-    spendActiveToken(player.id)
     talesOfOld(player.id, cardId, opts)
     if (cardId === 'rn10') {
       // rn10 grants +1 token then we immediately spend it on a Righteous Duel
@@ -1521,19 +1503,18 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                         </div>
                       )}
                       <div className="text-xs text-amber-400 font-semibold">⚠ Card permanently removed after spending.</div>
-                        <button
-                            onClick={() => handleTalesConfirm(card.id)}
-                            disabled={
-                                player.activeTokens < 1 ||
-                                (card.id === 'rn01' && (rn01HoardIds.length === 0 || rn01HoardIds.length !== rn01FleaIdxs.length)) ||
-                                (card.id === 'rn06' && rn06Cards.length < 2) ||
-                                (card.id === 'rn08' && player.hoard.length === 0) ||
-                                (card.id === 'rn10' && (!myStakeValid || challengeableTargets.length === 0))
-                            }
-                            className="btn-primary text-sm px-3 py-2 w-full disabled:opacity-50"
-                        >
-                            ✦ Spend — {card.name} → spend 1 token
-                        </button>
+                      <button
+                        onClick={() => handleTalesConfirm(card.id)}
+                        disabled={
+                          (card.id === 'rn01' && (rn01HoardIds.length === 0 || rn01HoardIds.length !== rn01FleaIdxs.length)) ||
+                          (card.id === 'rn06' && rn06Cards.length < 2) ||
+                          (card.id === 'rn08' && player.hoard.length === 0) ||
+                          (card.id === 'rn10' && (!myStakeValid || challengeableTargets.length === 0))
+                        }
+                        className="btn-primary text-sm px-3 py-2 w-full disabled:opacity-50"
+                      >
+                        ✦ Spend — {card.name}
+                      </button>
                     </div>
                   )}
                 </div>
