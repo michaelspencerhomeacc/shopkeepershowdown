@@ -1124,13 +1124,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
         // Monks always stay at 0.
         return p.classId === 'monk' ? { ...p, activeTokens: 0 } : p
       })
-      // Reopen rn03 round-shuttered windows and reset rn04 reroll availability
+      // Reset rn04 reroll availability (rn03 roundShuttered windows reopen at turn start, not here)
       const playersWithReopened = updatedPlayers.map(p => ({
         ...p,
         rn04RerollUsed: false,
-        windows: p.windows.map(w =>
-          w.roundShuttered ? { ...w, status: 'normal' as const, roundShuttered: false } : w
-        ),
       }))
       return {
         round: newRound,
@@ -1200,7 +1197,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const remaining = shuffled.slice(4)
     set(s => ({
       resourceDiscard: remaining,
-      foragePeek: { playerId, cards: drawn },
+      foragePeek: { playerId, cards: drawn, source: 'location' },
       actionLog: [logEntry(`${player.name} forages — drew 4 from the discard pile.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
   },
@@ -1210,8 +1207,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!foragePeek || foragePeek.playerId !== playerId) return
     const player = players.find(p => p.id === playerId)
     if (!player) return
-    const kept = foragePeek.cards.filter(c => keepCardIds.includes(c.id))
-    const returned = foragePeek.cards.filter(c => !keepCardIds.includes(c.id))
+    const keepSet = new Set(keepCardIds.slice(0, 2))
+    const kept = foragePeek.cards.filter(c => keepSet.has(c.id))
+    const returned = foragePeek.cards.filter(c => !keepSet.has(c.id))
     set(s => ({
       foragePeek: null,
       resourceDiscard: [...returned, ...s.resourceDiscard],
@@ -1572,7 +1570,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players.find(p => p.id === playerId)
     if (!player) return
     const brokenCount = player.windows.filter(w => w.status === 'broken').length
-    // Gates of Mirhollow (rn03): +1 CON Rep per window actually repaired
+    // Gates of Mirhollow (rn03): +1 ARM Rep per window actually repaired
     const rn03 = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn03')
     // Mercy of Thornwall (rn05): Draw 1 per window repaired
     const rn05 = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn05')
@@ -1582,10 +1580,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       players: s.players.map(p => {
         if (p.id !== playerId) return p
         const withWindows = { ...p, windows: p.windows.map(w => ({ ...w, status: 'normal' as WindowStatus })) }
-        // +1 rep of chosen type from the Barracks repair action itself
-        const withRepType = repType ? { ...withWindows, rep: { ...withWindows.rep, [repType]: withWindows.rep[repType] + 1 } } : withWindows
-        // rn03: additional CON rep per window repaired
-        const withRn03 = rn03 && brokenCount > 0 ? { ...withRepType, rep: { ...withRepType.rep, CON: withRepType.rep.CON + brokenCount } } : withRepType
+        // +1 rep of chosen type — Paladin only (only Paladins gain Rep from repairing)
+        const withRepType = (repType && p.classId === 'paladin') ? { ...withWindows, rep: { ...withWindows.rep, [repType]: withWindows.rep[repType] + 1 } } : withWindows
+        // rn03: additional ARM rep per window repaired
+        const withRn03 = rn03 && brokenCount > 0 ? { ...withRepType, rep: { ...withRepType.rep, ARM: withRepType.rep.ARM + brokenCount } } : withRepType
         const withDraw = draw ? { ...withRn03, hoard: [...withRn03.hoard, ...draw.drawn] } : withRn03
         return withDraw
       }),
@@ -1593,8 +1591,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       resourceDiscard: draw ? draw.discard : s.resourceDiscard,
       actionLog: [logEntry(
         `${player.name} repaired all windows.` +
-        (repType && brokenCount > 0 ? ` Gained 1 ${repType} rep.` : '') +
-        (rn03 && brokenCount > 0 ? ` Gates of Mirhollow — +${brokenCount} CON Rep.` : '') +
+        (repType && brokenCount > 0 && player.classId === 'paladin' ? ` Gained 1 ${repType} rep.` : '') +
+        (rn03 && brokenCount > 0 ? ` Gates of Mirhollow — +${brokenCount} ARM Rep.` : '') +
         (draw && draw.drawn.length > 0 ? ` Mercy of Thornwall — drew ${draw.drawn.map(c => c.name).join(', ')}.` : ''),
         playerId
       ), ...s.actionLog.slice(0, 49)],
@@ -1616,11 +1614,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // Paladin passive: +1 extra Rep (Honourable Trade)
     const paladinCrimeBonus = reporter.classId === 'paladin' ? 1 : 0
     const totalRep = 1 + paladinCrimeBonus
+    const awardedRepType = reporter.classId === 'paladin' && card ? card.type : repType
 
     set(s => ({
       players: s.players.map(p => {
         if (p.id === byPlayerId) {
-          return { ...p, rep: { ...p.rep, [repType]: p.rep[repType] + totalRep } }
+          return { ...p, rep: { ...p.rep, [awardedRepType]: p.rep[awardedRepType] + totalRep } }
         }
         if (p.id === targetPlayerId) {
           return {
@@ -1633,7 +1632,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }),
       resourceDiscard: card ? [card, ...s.resourceDiscard] : s.resourceDiscard,
       actionLog: [logEntry(
-        `${reporter.name} reported crime — gained ${totalRep} ${repType} rep${paladinCrimeBonus > 0 ? ` (Honourable Trade +${paladinCrimeBonus})` : ''}; ${target.name} discarded ${card?.name ?? 'stolen card'}.`,
+        `${reporter.name} reported crime — gained ${totalRep} ${awardedRepType} rep${paladinCrimeBonus > 0 ? ` (Honourable Trade +${paladinCrimeBonus})` : ''}; ${target.name} discarded ${card?.name ?? 'stolen card'}.`,
         byPlayerId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -1792,7 +1791,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { players, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
-    // Gates of Mirhollow (rn03): gain 1 CON Rep per repair
+    // Gates of Mirhollow (rn03): gain 1 ARM Rep per repair
     const rn03 = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn03')
     // Mercy of Thornwall (rn05): Draw 1 on repair
     const rn05 = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn05')
@@ -1801,7 +1800,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       players: s.players.map(p => {
         if (p.id !== playerId) return p
         const withWindow = { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'normal' as WindowStatus } : w) }
-        const withRep = rn03 ? { ...withWindow, rep: { ...withWindow.rep, CON: withWindow.rep.CON + 1 } } : withWindow
+        const withRep = rn03 ? { ...withWindow, rep: { ...withWindow.rep, ARM: withWindow.rep.ARM + 1 } } : withWindow
         const withDraw = draw ? { ...withRep, hoard: [...withRep.hoard, ...draw.drawn] } : withRep
         return withDraw
       }),
@@ -1809,7 +1808,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       resourceDiscard: draw ? draw.discard : s.resourceDiscard,
       actionLog: [logEntry(
         `${player.name} repaired window ${windowIdx + 1}.` +
-        (rn03 ? ' Gates of Mirhollow — +1 CON Rep.' : '') +
+        (rn03 ? ' Gates of Mirhollow — +1 ARM Rep.' : '') +
         (draw && draw.drawn.length > 0 ? ` Mercy of Thornwall — drew ${draw.drawn[0].name}.` : ''),
         playerId
       ), ...s.actionLog.slice(0, 49)],
@@ -2589,6 +2588,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players.find(p => p.id === playerId)
     if (!player || player.activeTokens < 1) return
 
+    let forageCards: ResourceCard[] = []
     let updatedPlayers = players.map(p =>
       p.id === playerId ? { ...p, activeTokens: p.activeTokens - 1 } : p
     )
@@ -2596,6 +2596,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
     let discard = resourceDiscard
     let flea = [...fleaMarket]
     const logs: string[] = []
+
+    if (effects.forage2) {
+      if (discard.length < 4) return
+      const shuffledDiscard = shuffle([...discard])
+      forageCards = shuffledDiscard.slice(0, 4)
+      discard = shuffledDiscard.slice(4)
+      logs.push('Forage 2')
+    }
 
     if (effects.draw1) {
       const result = drawCards(deck, discard, 1, 0, Infinity)
@@ -2633,23 +2641,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
     }
 
-    if (effects.forage2) {
-      // Shuffle discard into deck, draw 2 blind (Patience is resolved in one action)
-      const combined = shuffle([...deck, ...discard])
-      const drawn = combined.slice(0, 2)
-      deck = combined.slice(2)
-      discard = []
-      updatedPlayers = updatedPlayers.map(p =>
-        p.id === playerId ? { ...p, hoard: [...p.hoard, ...drawn] } : p
-      )
-      logs.push(`Forage 2 (drew ${drawn.length})`)
-    }
-
     set(s => ({
       players: updatedPlayers,
       resourceDeck: deck,
       resourceDiscard: discard,
       fleaMarket: flea,
+      foragePeek: forageCards.length > 0 ? { playerId, cards: forageCards, source: 'patience' } : s.foragePeek,
       classAbilitiesUsedThisTurn: s.classAbilitiesUsedThisTurn.includes('patienceOfStone')
         ? s.classAbilitiesUsedThisTurn
         : [...s.classAbilitiesUsedThisTurn, 'patienceOfStone'],
@@ -2697,8 +2694,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     // Paladin Honourable Trade: rep bonus on successful negotiate
     // rn08 Merchant of Saltholm doubles the Paladin's own rep gain only — target always gets +1
-    const prt = negotiateReview.paladinRepType
     const isPaladin = proposer.classId === 'paladin'
+    const prt = isPaladin
+      ? (negotiateReview.paladinRepType ?? offeredCard.type)
+      : negotiateReview.paladinRepType
     const proposerRepGain = isPaladin && prt
       ? (proposer.renownCards.some(c => c.id === 'rn08') ? 2 : 1)
       : 0
@@ -2989,9 +2988,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
             const withShutter = { ...p, windows: p.windows.map((w, i) =>
               idxs.includes(i) ? { ...w, status: 'shuttered' as WindowStatus, roundShuttered: true } : w
             )}
-            return closedCount > 0 ? { ...withShutter, rep: { ...withShutter.rep, CON: withShutter.rep.CON + closedCount } } : withShutter
+            return closedCount > 0 ? { ...withShutter, rep: { ...withShutter.rep, ARM: withShutter.rep.ARM + closedCount } } : withShutter
           })
-          logMsg += `Gates of Mirhollow — closed ${closedCount} window(s) until next round, +${closedCount} CON Rep.`
+          logMsg += `Gates of Mirhollow — closed ${closedCount} window(s) until your next turn, +${closedCount} ARM Rep.`
           break
         }
         case 'rn04': { // All players discard 1 resource of Paladin's choice
@@ -3140,14 +3139,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       )
 
     // Helper: unshutter windows 0 and 4 (turn-mechanic windows) for the player whose turn is starting.
-    // rn03 roundShuttered windows are NOT reopened here — they reopen at nextRound().
+    // rn03 roundShuttered windows also reopen here — they last until the player's own next turn.
     const unshutterStartingPlayer = (allPlayers: typeof players, startingId: string) =>
       allPlayers.map(p =>
         p.id !== startingId ? p : {
           ...p,
           windows: p.windows.map((w, i) =>
-            (i === 0 || i === 4) && w.status === 'shuttered' && !w.roundShuttered
-              ? { ...w, status: 'normal' as const }
+            (i === 0 || i === 4) && w.status === 'shuttered'
+              ? { ...w, status: 'normal' as const, roundShuttered: false }
               : w
           ),
         }
@@ -3297,6 +3296,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const discarded: ResourceCard[] = []
     let totalCoins = 0
     const repGains: Partial<Record<RepType, number>> = {}
+    const paladinVisitorRepGains: Partial<Record<RepType, number>> = {}
     const usedWindowIdxs = new Set(assignments.map(a => a.windowIdx))
 
     // Updated demand remaining after this sell phase
@@ -3327,15 +3327,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
       // Check if fully satisfied
       if (Object.values(remaining).every(n => n === 0)) {
         claimedVisitorIdxs.push(visitorIdx)
+        if (player.classId === 'paladin') {
+          paladinVisitorRepGains[card.type] = (paladinVisitorRepGains[card.type] ?? 0) + 1
+        }
       }
     }
 
     const claimedVisitors = claimedVisitorIdxs.map(i => activeVisitors[i]).filter(Boolean) as VisitorCard[]
 
-    // Paladin passive: Honourable Trade — +1 CON Rep per satisfied Visitor
-    const paladinVisitorBonus = claimedVisitorIdxs.length > 0 && player.classId === 'paladin'
-      ? claimedVisitorIdxs.length
-      : 0
+    // Paladin passive: Honourable Trade — +1 Rep matching the resource that satisfied each public Visitor
+    const paladinVisitorBonus = Object.values(paladinVisitorRepGains).reduce((sum, n) => sum + (n ?? 0), 0)
     // King's Errand (rn07): +1 coin per completed public Visitor
     const rn07CoinBonus = claimedVisitorIdxs.length > 0 && player.classId === 'paladin'
       && player.renownCards.some(c => c.id === 'rn07')
@@ -3345,7 +3346,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set(s => {
       const newRep = { ...player.rep }
       for (const [t, n] of Object.entries(repGains)) newRep[t as RepType] = (newRep[t as RepType] ?? 0) + n
-      if (paladinVisitorBonus > 0) newRep.CON = (newRep.CON ?? 0) + paladinVisitorBonus
+      for (const [t, n] of Object.entries(paladinVisitorRepGains)) newRep[t as RepType] = (newRep[t as RepType] ?? 0) + n
 
       // Remove claimed visitors from demand map
       for (const v of claimedVisitors) delete newDemandRemaining[v.id]
@@ -3373,7 +3374,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             `${player.name} sell phase — sold ${discarded.length} item(s) for ${totalCoins} coins` +
             (Object.keys(repGains).length ? ` +rep (${Object.entries(repGains).map(([t, n]) => `${n} ${t}`).join(', ')})` : '') +
             (claimedVisitors.length ? ` — ${claimedVisitors.map(v => v.name).join(', ')} satisfied!` : '') +
-            (paladinVisitorBonus > 0 ? ` Honourable Trade +${paladinVisitorBonus} CON.` : '') +
+            (paladinVisitorBonus > 0 ? ` Honourable Trade +rep (${Object.entries(paladinVisitorRepGains).map(([t, n]) => `${n} ${t}`).join(', ')}).` : '') +
             (rn07CoinBonus > 0 ? ` King's Errand +${rn07CoinBonus} coin(s).` : '') + '.',
             playerId
           ),
