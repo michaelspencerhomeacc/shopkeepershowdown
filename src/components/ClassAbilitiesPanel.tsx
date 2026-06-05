@@ -4,6 +4,7 @@ import { LOCATIONS } from './SharedBoard'
 import { useGameStore } from '../store/gameStore'
 import { ResourceCardMini } from './ResourceCardMini'
 import { CardPickerGrid } from './CardPickerGrid'
+import { DiceRollModal } from './DiceRollModal'
 
 interface Props {
   player: Player
@@ -24,6 +25,9 @@ export function ClassAbilitiesPanel({ player, isActiveTurn, isOwn = true }: Prop
   }
   if (player.classId === 'ranger') {
     return <RangerAbilities player={player} isActiveTurn={isActiveTurn} isOwn={isOwn} />
+  }
+  if (player.classId === 'rogue') {
+    return <RogueAbilities player={player} isOwn={isOwn} />
   }
   return null
 }
@@ -1331,7 +1335,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                         <div className="space-y-1">
                           <div className="text-xs text-parchment-400">Choose up to 2 windows to close ({rn03Windows.length}/2):</div>
                           <div className="flex flex-wrap gap-1">
-                            {player.windows.map((w, i) => w.status !== 'shuttered' && (
+                            {player.windows.map((w, i) => i > 0 && i < 4 && w.status !== 'shuttered' && (
                               <button key={i}
                                 onClick={() => setRn03Windows(prev => prev.includes(i) ? prev.filter(x => x !== i) : prev.length < 2 ? [...prev, i] : prev)}
                                 className={`text-xs rounded px-2 py-1 border font-semibold ${rn03Windows.includes(i) ? 'bg-amber-600/60 border-amber-400 text-amber-200' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
@@ -1552,6 +1556,164 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
 const LOCATION_LABELS: Record<string, string> = {
   guildhall: 'Guildhall', tavern: 'Tavern', wilderness: 'Wilderness',
   barracks: 'Barracks', workshop: 'Workshop', 'thieves-guild': "Thieves' Guild",
+}
+
+function RogueAbilities({ player, isOwn = true }: { player: Player; isOwn?: boolean }) {
+  const { players, fromTheShadows, guildContacts } = useGameStore()
+  const [guildOpen, setGuildOpen] = useState(false)
+  const [guildCardId, setGuildCardId] = useState('')
+  const [guildRoll, setGuildRoll] = useState<{ cardId: string; roll: number } | null>(null)
+  const [shadowsOpen, setShadowsOpen] = useState(false)
+  const [targetId, setTargetId] = useState(player.id)
+  const [windowIdx, setWindowIdx] = useState(1)
+  const [counterfeitId, setCounterfeitId] = useState(player.counterfeitHand[0]?.id ?? '')
+
+  const canUseShadows = isOwn && player.activeTokens >= 1 && player.counterfeitHand.length > 0
+  const stolenHoardCards = player.hoard.filter(c => player.stolenHoardCardIds.includes(c.id) && !('counterfeit' in c))
+  const stolenWindowCards = player.windows.filter(w => w.stolen && w.card && !('counterfeit' in w.card)).map(w => w.card!)
+  const guildOptions = [...stolenHoardCards, ...stolenWindowCards]
+  const canUseGuildContacts = isOwn && player.activeTokens >= 1 && guildOptions.length > 0
+  const target = players.find(p => p.id === targetId) ?? player
+  const windowOptions = target.windows.map((w, i) => ({ w, i })).filter(({ w }) => w.status !== 'shuttered')
+  const selectedCounterfeit = player.counterfeitHand.find(c => c.id === counterfeitId) ?? player.counterfeitHand[0]
+
+  function chooseTarget(id: string) {
+    const nextTarget = players.find(p => p.id === id)
+    setTargetId(id)
+    const firstWindow = nextTarget?.windows.findIndex(w => w.status !== 'shuttered') ?? -1
+    setWindowIdx(firstWindow >= 0 ? firstWindow : 1)
+  }
+
+  function confirmShadows() {
+    if (!selectedCounterfeit) return
+    fromTheShadows(player.id, target.id, windowIdx, selectedCounterfeit.id)
+    setShadowsOpen(false)
+    setCounterfeitId('')
+  }
+
+  return (
+    <div className="border-t border-parchment-800/30 pt-3 space-y-3">
+      <div className="flex items-center gap-3">
+        <img src="/cards/player-boards/Rogue.png" alt="Rogue" className="w-11 h-11 rounded-full border-2 border-slate-500/60 object-cover shadow-md flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm text-parchment-500 uppercase tracking-widest font-semibold">Class Abilities</div>
+          <div className="text-base font-display font-bold text-parchment-100">Rogue</div>
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
+          <span className="text-xs text-parchment-500">Active</span>
+          {[0, 1].map(i => (
+            <div key={i} className="w-5 h-5 rounded-full border-2 border-slate-500/40 bg-ink-800/80 flex items-center justify-center">
+              {i < player.activeTokens && <div className="w-2.5 h-2.5 rounded-full bg-slate-300" />}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-parchment-800/40 overflow-hidden">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-ink-900/50 border-b border-parchment-800/30">
+          <span className="text-sm">◆</span>
+          <span className="text-sm font-bold text-parchment-300 uppercase tracking-wide">Passive · No Honour Among Thieves</span>
+        </div>
+        <div className="px-3 py-2 text-sm text-parchment-400 leading-relaxed">
+          Steal actions may become Heists. Counterfeits sell and craft as resources, return to the Rogue deck when sold, and are removed from play when crafted.
+        </div>
+      </div>
+
+      <div className="rounded-xl border-2 border-slate-700/40 bg-ink-900/40 overflow-hidden">
+        <button type="button" onClick={() => canUseGuildContacts && setGuildOpen(v => !v)} disabled={!canUseGuildContacts} className="w-full px-3 py-2.5 flex items-center gap-3 text-left disabled:opacity-50 border-b border-parchment-800/30">
+          <span className="text-xl flex-shrink-0">◇</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-base font-bold text-slate-200">Guild Contacts</div>
+            <div className="text-sm text-parchment-400 leading-snug">
+              {player.activeTokens < 1 ? 'Need 1 Active token' : guildOptions.length === 0 ? 'No stolen non-Counterfeit resources' : 'Auction 1 stolen resource; on 5+ gain matching Rep'}
+            </div>
+          </div>
+        </button>
+
+        {guildOpen && (
+          <div className="px-3 py-3 space-y-2 border-b border-parchment-800/30">
+            <div className="flex flex-wrap gap-1.5">
+              {guildOptions.map(c => (
+                <ResourceCardMini key={c.id} card={c} size="lg" selected={guildCardId === c.id} onClick={() => setGuildCardId(c.id)} />
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!guildCardId) return
+                setGuildRoll({ cardId: guildCardId, roll: Math.ceil(Math.random() * 6) })
+              }}
+              disabled={!guildCardId}
+              className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50"
+            >
+              Auction Stolen Resource · Spend 1 Active
+            </button>
+          </div>
+        )}
+
+        {guildRoll && (
+          <DiceRollModal
+            result={guildRoll.roll}
+            title="Guild Contacts"
+            subtitle="Auctioning stolen resource"
+            onDismiss={() => {
+              guildContacts(player.id, guildRoll.cardId, guildRoll.roll)
+              setGuildRoll(null)
+              setGuildOpen(false)
+              setGuildCardId('')
+            }}
+          />
+        )}
+
+        <button type="button" onClick={() => canUseShadows && setShadowsOpen(v => !v)} disabled={!canUseShadows} className="w-full px-3 py-2.5 flex items-center gap-3 text-left disabled:opacity-50">
+          <span className="text-xl flex-shrink-0">◐</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-base font-bold text-slate-200">From the Shadows</div>
+            <div className="text-sm text-parchment-400 leading-snug">
+              {player.activeTokens < 1 ? 'Need 1 Active token' : player.counterfeitHand.length === 0 ? 'No Counterfeits in hand' : 'Place 1 Counterfeit in any non-shuttered window'}
+            </div>
+          </div>
+        </button>
+
+        {shadowsOpen && (
+          <div className="px-3 pb-3 space-y-2">
+            <div className="text-xs text-parchment-500">Target player:</div>
+            <div className="flex flex-wrap gap-1">
+              {players.map(p => (
+                <button key={p.id} type="button" onClick={() => chooseTarget(p.id)} className={`text-xs px-2 py-0.5 rounded border transition-colors ${target.id === p.id ? 'bg-slate-600/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                  {p.name}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs text-parchment-500">Window:</div>
+            <div className="flex flex-wrap gap-2">
+              {windowOptions.map(({ w, i }) => (
+                <button key={w.id} type="button" onClick={() => setWindowIdx(i)} className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${windowIdx === i ? 'bg-slate-700/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                  <div className="w-16 h-24 rounded overflow-hidden border border-parchment-700/30 bg-ink-900/60 flex items-center justify-center">
+                    {w.card ? <img src={w.card.imageFile} alt={w.card.name} className="w-full h-full object-cover" /> : <span className="text-[9px] text-parchment-600">Empty</span>}
+                  </div>
+                  <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                  {w.card && <span className="text-[9px] max-w-[70px] truncate">{w.card.name}</span>}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs text-parchment-500">Counterfeit:</div>
+            <div className="flex flex-wrap gap-1.5">
+              {player.counterfeitHand.map(c => (
+                <ResourceCardMini key={c.id} card={c} size="lg" selected={(counterfeitId || selectedCounterfeit?.id) === c.id} onClick={() => setCounterfeitId(c.id)} />
+              ))}
+            </div>
+
+            <button type="button" onClick={confirmShadows} disabled={!selectedCounterfeit || windowOptions.length === 0} className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50">
+              Place Counterfeit · Spend 1 Active
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function RangerAbilities({ player, isActiveTurn, isOwn = true }: { player: Player; isActiveTurn: boolean; isOwn?: boolean }) {

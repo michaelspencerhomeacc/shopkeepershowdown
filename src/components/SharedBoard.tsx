@@ -133,6 +133,8 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     currentTurnPlayerId, turnActionsUsed, locationsUsedThisTurn,
     bonusActionsThisTurn,
     endTurn, sellPhaseDone, round, clashResult, dismissClash, acknowledgeClash,
+    rogueShadowsPending, rogueShadowsPromptedForTurn, requestRogueShadowsInterrupt, skipRogueShadowsInterrupt,
+    rogueCounterfeitEffectPending, clearRogueCounterfeitEffect,
     barbarianClashOptOut, submitBarbarianClashChoice, resolveBarbarianClashOptOut,
     shamanCallLightning, resolveCallLightning,
     negotiatePending, negotiateReview, counterNegotiate, resolveNegotiate,
@@ -154,6 +156,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     townCrierPeek, completeTownCrier, activeVisitors, visitorDemandRemaining,
     professionalSlots,
     actionLog, lastGuildFenceType,
+    steal, heist,
   } = useGameStore()
 
   /** Returns true in local/pass-and-play (no localPlayerName) or when the player whose
@@ -202,8 +205,18 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     id: string
     playerName: string; playerClassId: string; amount: number; source: string
   }>>([])
+  const [rogueToasts, setRogueToasts] = useState<Array<{
+    id: string
+    rogueName: string
+    rogueClassId: string
+    title: string
+    detail: string
+    cardName: string
+    cardImageFile: string | null
+  }>>([])
   // Separate log-id ref for coin toast (avoids sharing state with steal-toast ref)
   const prevCoinLogRef = useRef<string | null>(null)
+  const prevRogueLogRef = useRef<string | null>(null)
   const prevCoinsRef = useRef<Record<string, number> | null>(null)
   const prevLightningRef = useRef<string | null>(null)
   // Clan toll gate: set before opening the action panel; null = no gate active
@@ -249,10 +262,23 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     setTimeout(() => setCoinToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
 
+  function pushRogueToast(toast: Omit<(typeof rogueToasts)[number], 'id'>) {
+    const id = `${Date.now()}-${Math.random()}`
+    setRogueToasts(prev => [{ id, ...toast }, ...prev].slice(0, 3))
+    playSfx('steal')
+    setTimeout(() => setRogueToasts(prev => prev.filter(t => t.id !== id)), 4500)
+  }
+
   // Auto-open sell phase when the active player changes (from round 2) — only for the acting player
   useEffect(() => {
-    if (round >= 2 && !sellPhaseDone && canAct) setSellPhaseOpen(true)
-  }, [currentTurnPlayerId]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (round < 2 || sellPhaseDone || !canAct || sellPhaseOpen) return
+    if (rogueShadowsPending?.sellerId === currentTurnPlayerId) return
+    if (rogueShadowsPromptedForTurn !== currentTurnPlayerId) {
+      const prompted = requestRogueShadowsInterrupt(currentTurnPlayerId)
+      if (prompted) return
+    }
+    setSellPhaseOpen(true)
+  }, [currentTurnPlayerId, sellPhaseDone, canAct, sellPhaseOpen, rogueShadowsPending, rogueShadowsPromptedForTurn, requestRogueShadowsInterrupt, round])
 
   // Show round toast whenever the round counter advances
   useEffect(() => {
@@ -349,6 +375,63 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         cardName,
         cardImageFile: findCardImage(cardName),
       })
+    }
+  }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (actionLog.length === 0) return
+    const newEntries = []
+    for (const entry of actionLog) {
+      if (entry.id === prevRogueLogRef.current) break
+      newEntries.push(entry)
+    }
+    if (newEntries.length === 0) return
+    prevRogueLogRef.current = actionLog[0].id
+
+    function findCardImage(cardName: string) {
+      for (const p of players) {
+        const hoardCard = p.hoard.find(c => c.name === cardName)
+        if (hoardCard) return hoardCard.imageFile
+        const windowCard = p.windows.find(w => w.card?.name === cardName)?.card
+        if (windowCard) return windowCard.imageFile
+        const counterfeit = p.counterfeitCards.find(c => c.name === cardName) ?? p.counterfeitHand.find(c => c.name === cardName)
+        if (counterfeit) return counterfeit.imageFile
+      }
+      return null
+    }
+
+    for (const entry of newEntries) {
+      const rogue = entry.playerId ? players.find(p => p.id === entry.playerId) : players.find(p => p.classId === 'rogue')
+      if (!rogue || rogue.classId !== 'rogue') continue
+      const msg = entry.message
+
+      const returned = msg.match(/Counterfeit cards?.*returned to the Rogue deck/i)
+      if (returned) {
+        pushRogueToast({
+          rogueName: rogue.name,
+          rogueClassId: rogue.classId,
+          title: 'Counterfeit Sold',
+          detail: msg,
+          cardName: 'Counterfeit',
+          cardImageFile: markerSrc('rogue'),
+        })
+        continue
+      }
+
+      const shadows = msg.match(/used From the Shadows.*?planted\s+(.+?)\s+in\s+(.+?)'s window\s+(\d+)/i)
+      if (shadows) {
+        const counterfeitName = shadows[1].trim()
+        const victimName = shadows[2].trim()
+        const windowNum = shadows[3].trim()
+        pushRogueToast({
+          rogueName: rogue.name,
+          rogueClassId: rogue.classId,
+          title: 'From the Shadows',
+          detail: `${rogue.name} planted ${counterfeitName} in ${victimName}'s Window ${windowNum}.`,
+          cardName: counterfeitName,
+          cardImageFile: findCardImage(counterfeitName),
+        })
+      }
     }
   }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -580,7 +663,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         )
       })()}
 
-      {(stealToasts.length > 0 || breakToasts.length > 0 || nightWatcherToast || coinToasts.length > 0) && (
+      {(stealToasts.length > 0 || breakToasts.length > 0 || nightWatcherToast || coinToasts.length > 0 || rogueToasts.length > 0) && (
         <div className="fixed top-8 left-0 right-0 flex flex-col items-center gap-3 z-[590] pointer-events-none">
 
           {/* Steal toast */}
@@ -648,6 +731,26 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                   <div className="text-red-300 font-display font-bold text-xl leading-tight">Window Broken</div>
                   <div className="text-parchment-100 text-sm font-semibold">{toast.victimName} - {toast.windowText}</div>
                   {toast.cause && <div className="text-parchment-400 text-xs leading-snug max-w-[360px]">{toast.cause}</div>}
+                </div>
+              </div>
+            )
+          })()}
+
+          {rogueToasts[0] && (() => {
+            const toast = rogueToasts[0]
+            const theme = CLASS_THEME[toast.rogueClassId] ?? DEFAULT_CLASS_THEME
+            return (
+              <div className={`steal-toast ${theme.panel} ${theme.border} border-2 rounded-2xl px-7 py-5 shadow-2xl ${theme.glow} flex items-center gap-4`}>
+                <div className="w-16 h-20 rounded-lg overflow-hidden border border-slate-300/60 bg-ink-950 flex-shrink-0">
+                  {toast.cardImageFile
+                    ? <img src={toast.cardImageFile} alt={toast.cardName} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center text-slate-300 text-xl">◐</div>
+                  }
+                </div>
+                <div>
+                  <div className={`text-sm uppercase tracking-[0.24em] font-bold ${theme.text}`}>{toast.title}</div>
+                  <div className="text-parchment-100 text-base font-display font-bold">{toast.cardName}</div>
+                  <div className="text-parchment-400 text-xs leading-snug max-w-[380px]">{toast.detail}</div>
                 </div>
               </div>
             )
@@ -737,7 +840,55 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         <CheatSheetModal onClose={() => setShowCheatSheet(false)} />
       )}
 
+      {rogueShadowsPending && (
+        isMe(rogueShadowsPending.rogueId)
+          ? <RogueShadowsInterruptModal
+              pending={rogueShadowsPending}
+              players={players}
+              onUse={(windowIdx, counterfeitId) => {
+                useGameStore.getState().fromTheShadows(
+                  rogueShadowsPending.rogueId,
+                  rogueShadowsPending.sellerId,
+                  windowIdx,
+                  counterfeitId,
+                )
+              }}
+              onSkip={skipRogueShadowsInterrupt}
+            />
+          : rogueShadowsPending.sellerId === currentTurnPlayerId && (
+            <WaitingOverlay
+              name={players.find(p => p.id === rogueShadowsPending.rogueId)?.name}
+              action="deciding whether to use From the Shadows"
+              classId={players.find(p => p.id === rogueShadowsPending.rogueId)?.classId}
+            />
+          )
+      )}
+
       {/* Sell phase modal — only for the acting player */}
+      {rogueCounterfeitEffectPending && rogueCounterfeitEffectPending.effect.kind === 'steal' && (
+        isMe(rogueCounterfeitEffectPending.rogueId)
+          ? <RogueCounterfeitStealModal
+              pending={rogueCounterfeitEffectPending}
+              players={players}
+              onSteal={(targetId) => {
+                steal(rogueCounterfeitEffectPending.rogueId, targetId)
+                clearRogueCounterfeitEffect()
+              }}
+              onHeist={(targetId, windowIdx, counterfeitId) => {
+                heist(rogueCounterfeitEffectPending.rogueId, targetId, windowIdx, counterfeitId)
+                clearRogueCounterfeitEffect()
+              }}
+              onSkip={clearRogueCounterfeitEffect}
+            />
+          : (
+            <WaitingOverlay
+              name={players.find(p => p.id === rogueCounterfeitEffectPending.rogueId)?.name}
+              action={`resolving ${rogueCounterfeitEffectPending.cardName}`}
+              classId={players.find(p => p.id === rogueCounterfeitEffectPending.rogueId)?.classId}
+            />
+          )
+      )}
+
       {round >= 2 && !sellPhaseDone && (
         canAct ? (
           sellPhaseOpen && (
@@ -811,7 +962,14 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
           </div>
           {round >= 2 && !sellPhaseDone && canAct && (
             <button
-              onClick={() => setSellPhaseOpen(true)}
+              onClick={() => {
+                if (rogueShadowsPending?.sellerId === currentTurnPlayerId) return
+                if (rogueShadowsPromptedForTurn !== currentTurnPlayerId) {
+                  const prompted = requestRogueShadowsInterrupt(currentTurnPlayerId)
+                  if (prompted) return
+                }
+                setSellPhaseOpen(true)
+              }}
               className="text-[10px] bg-amber-900/40 border border-amber-600/40 text-amber-300 px-2 py-0.5 rounded font-semibold hover:bg-amber-800/50 transition-colors"
             >
               Sell phase pending
@@ -3457,6 +3615,222 @@ function RighteousDuelModal({
 // ---- Waiting helpers ----
 
 /** Full-screen overlay shown to players who are NOT the one acting on an interrupt. */
+function RogueShadowsInterruptModal({
+  pending,
+  players,
+  onUse,
+  onSkip,
+}: {
+  pending: NonNullable<GameState['rogueShadowsPending']>
+  players: Player[]
+  onUse: (windowIdx: number, counterfeitId: string) => void
+  onSkip: () => void
+}) {
+  const rogue = players.find(p => p.id === pending.rogueId)
+  const seller = players.find(p => p.id === pending.sellerId)
+  const windowOptions = seller?.windows
+    .map((w, i) => ({ w, i }))
+    .filter(({ w, i }) => i > 0 && i < 4 && w.status !== 'shuttered' && w.card) ?? []
+  const [windowIdx, setWindowIdx] = useState(windowOptions[0]?.i ?? 0)
+  const [counterfeitId, setCounterfeitId] = useState(rogue?.counterfeitHand[0]?.id ?? '')
+  const selectedCounterfeit = rogue?.counterfeitHand.find(c => c.id === counterfeitId) ?? rogue?.counterfeitHand[0]
+
+  if (!rogue || !seller) return null
+
+  return (
+    <div className="fixed inset-0 z-[360] flex items-center justify-center bg-black/65 px-4">
+      <div className="bg-ink-900 border-2 border-slate-400/70 rounded-xl p-5 shadow-2xl max-w-lg w-full text-center space-y-3">
+        <div className="flex items-center justify-center gap-4">
+          <img src={markerSrc(rogue.classId)} alt={rogue.name} className="w-14 h-14 rounded-full border-2 border-slate-400/70 object-cover shadow-lg" />
+          <div>
+            <div className="text-lg font-display font-bold text-slate-200">From the Shadows?</div>
+            <div className="text-xs text-parchment-500">
+              Before <span className="text-parchment-300 font-semibold">{seller.name}</span> sells
+            </div>
+          </div>
+          <img src={markerSrc(seller.classId)} alt={seller.name} className="w-14 h-14 rounded-full border-2 border-parchment-600/50 object-cover shadow-lg" />
+        </div>
+
+        <div className="text-sm text-parchment-400">
+          Spend 1 Active to plant a Counterfeit in one of {seller.name}'s non-shuttered windows and take the card inside.
+        </div>
+
+        {windowOptions.length === 0 || rogue.counterfeitHand.length === 0 || rogue.activeTokens < 1 ? (
+          <div className="text-xs text-red-400 font-semibold">
+            {rogue.activeTokens < 1 ? 'No Active token available.' : rogue.counterfeitHand.length === 0 ? 'No Counterfeits in hand.' : 'No eligible windows.'}
+          </div>
+        ) : (
+          <>
+            <div className="text-xs text-parchment-500 text-left">Choose window:</div>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {windowOptions.map(({ w, i }) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => setWindowIdx(i)}
+                  className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${
+                    windowIdx === i ? 'bg-slate-700/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-slate-400/70'
+                  }`}
+                >
+                  <img src={w.card!.imageFile} alt={w.card!.name} className="w-16 h-24 rounded object-cover border border-parchment-700/30" />
+                  <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                  <span className="text-[9px] max-w-[70px] truncate">{w.card!.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs text-parchment-500 text-left">Choose Counterfeit:</div>
+            <div className="flex flex-wrap gap-1.5 justify-center">
+              {rogue.counterfeitHand.map(c => (
+                <ResourceCardMini key={c.id} card={c} size="lg" selected={(counterfeitId || selectedCounterfeit?.id) === c.id} onClick={() => setCounterfeitId(c.id)} />
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={onSkip} className="btn-secondary flex-1 text-sm py-2">
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={() => selectedCounterfeit && onUse(windowIdx, selectedCounterfeit.id)}
+            disabled={!selectedCounterfeit || windowOptions.length === 0 || rogue.activeTokens < 1}
+            className="btn-primary flex-1 text-sm py-2 disabled:opacity-50"
+          >
+            Use From the Shadows
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RogueCounterfeitStealModal({
+  pending,
+  players,
+  onSteal,
+  onHeist,
+  onSkip,
+}: {
+  pending: NonNullable<GameState['rogueCounterfeitEffectPending']>
+  players: Player[]
+  onSteal: (targetId: string) => void
+  onHeist: (targetId: string, windowIdx: number, counterfeitId: string) => void
+  onSkip: () => void
+}) {
+  const rogue = players.find(p => p.id === pending.rogueId)
+  const stealTargets = players.filter(p => p.id !== pending.rogueId && !p.hasNightWatcher && p.hoard.length > 0)
+  const heistTargets = players.filter(p => p.id !== pending.rogueId && !p.hasNightWatcher && p.windows.some(w => w.status !== 'shuttered' && w.card))
+  const [mode, setMode] = useState<'steal' | 'heist'>('steal')
+  const [targetId, setTargetId] = useState(stealTargets[0]?.id ?? heistTargets[0]?.id ?? '')
+  const target = players.find(p => p.id === targetId) ?? stealTargets[0] ?? heistTargets[0]
+  const heistWindows = target?.windows.map((w, i) => ({ w, i })).filter(({ w }) => w.status !== 'shuttered' && w.card) ?? []
+  const [windowIdx, setWindowIdx] = useState(heistWindows[0]?.i ?? 0)
+  const [counterfeitId, setCounterfeitId] = useState(rogue?.counterfeitHand[0]?.id ?? '')
+  const selectedCounterfeit = rogue?.counterfeitHand.find(c => c.id === counterfeitId) ?? rogue?.counterfeitHand[0]
+  const canSteal = mode === 'steal' && !!target && stealTargets.some(p => p.id === target.id)
+  const canHeist = mode === 'heist' && !!target && heistWindows.length > 0 && !!selectedCounterfeit
+
+  if (!rogue) return null
+
+  function chooseMode(nextMode: 'steal' | 'heist') {
+    setMode(nextMode)
+    const nextTarget = (nextMode === 'steal' ? stealTargets : heistTargets)[0]
+    setTargetId(nextTarget?.id ?? '')
+    const nextWindow = nextTarget?.windows.findIndex(w => w.status !== 'shuttered' && w.card) ?? -1
+    setWindowIdx(nextWindow >= 0 ? nextWindow : 0)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[370] flex items-center justify-center bg-black/70 px-4">
+      <div className="bg-ink-900 border-2 border-slate-400/70 rounded-xl p-5 shadow-2xl max-w-lg w-full text-center space-y-3">
+        <div className="flex items-center justify-center gap-3">
+          <img src={pending.cardImageFile} alt={pending.cardName} className="w-16 h-24 rounded object-cover border border-slate-400/60 shadow-lg" />
+          <div className="text-left">
+            <div className="text-lg font-display font-bold text-slate-200">{pending.cardName}</div>
+            <div className="text-xs uppercase tracking-widest text-slate-400">Counterfeit returned</div>
+            <div className="text-sm text-parchment-300 mt-1">Resolve Steal {pending.effect.amount}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={() => chooseMode('steal')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${mode === 'steal' ? 'bg-slate-700/70 border-slate-300 text-slate-100' : 'bg-ink-800 border-parchment-700/40 text-parchment-400'}`}>
+            Steal
+          </button>
+          <button type="button" onClick={() => chooseMode('heist')} disabled={rogue.counterfeitHand.length === 0} className={`rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-40 ${mode === 'heist' ? 'bg-slate-700/70 border-slate-300 text-slate-100' : 'bg-ink-800 border-parchment-700/40 text-parchment-400'}`}>
+            Heist Instead
+          </button>
+        </div>
+
+        <div className="text-xs text-parchment-500 text-left">Target:</div>
+        <div className="flex flex-wrap gap-1.5 justify-center">
+          {(mode === 'steal' ? stealTargets : heistTargets).map(p => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setTargetId(p.id)
+                const firstWindow = p.windows.findIndex(w => w.status !== 'shuttered' && w.card)
+                if (firstWindow >= 0) setWindowIdx(firstWindow)
+              }}
+              className={`text-xs px-2 py-1 rounded border ${target?.id === p.id ? 'bg-slate-600/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+
+        {mode === 'heist' && (
+          <>
+            <div className="text-xs text-parchment-500 text-left">Window:</div>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {heistWindows.map(({ w, i }) => (
+                <button key={w.id} type="button" onClick={() => setWindowIdx(i)} className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${windowIdx === i ? 'bg-slate-700/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-slate-400/70'}`}>
+                  <img src={w.card!.imageFile} alt={w.card!.name} className="w-16 h-24 rounded object-cover border border-parchment-700/30" />
+                  <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                  <span className="text-[9px] max-w-[70px] truncate">{w.card!.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs text-parchment-500 text-left">Counterfeit replacement:</div>
+            <div className="flex flex-wrap gap-1.5 justify-center">
+              {rogue.counterfeitHand.map(c => (
+                <ResourceCardMini key={c.id} card={c} size="lg" selected={(counterfeitId || selectedCounterfeit?.id) === c.id} onClick={() => setCounterfeitId(c.id)} />
+              ))}
+            </div>
+          </>
+        )}
+
+        {(mode === 'steal' && stealTargets.length === 0) || (mode === 'heist' && (heistTargets.length === 0 || rogue.counterfeitHand.length === 0)) ? (
+          <div className="text-xs text-red-400 font-semibold">
+            {mode === 'steal' ? 'No steal targets available.' : rogue.counterfeitHand.length === 0 ? 'No Counterfeits in hand.' : 'No heist targets available.'}
+          </div>
+        ) : null}
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={onSkip} className="btn-secondary flex-1 text-sm py-2">
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!target) return
+              if (mode === 'steal' && canSteal) onSteal(target.id)
+              if (mode === 'heist' && canHeist && selectedCounterfeit) onHeist(target.id, windowIdx, selectedCounterfeit.id)
+            }}
+            disabled={!canSteal && !canHeist}
+            className="btn-primary flex-1 text-sm py-2 disabled:opacity-50"
+          >
+            Resolve
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function WaitingOverlay({ name, action, classId }: { name?: string; action: string; classId?: string }) {
   return (
     <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/60">
