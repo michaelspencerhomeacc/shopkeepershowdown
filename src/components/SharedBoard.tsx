@@ -1285,7 +1285,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       {pendingRangerPassiveRoll !== null && (
         <DiceRollModal
           result={pendingRangerPassiveRoll}
-          displayResult={Math.floor(pendingRangerPassiveRoll / 2)}
+          displayResult={Math.max(1, Math.floor(pendingRangerPassiveRoll / 2))}
           title="Master of the Wilderness"
           subtitle="Free gather from the Ranger passive"
           onDismiss={() => setPendingRangerPassiveRoll(null)}

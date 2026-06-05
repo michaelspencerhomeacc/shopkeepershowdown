@@ -528,7 +528,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         players: s.players.map(p => p.id === firstPlayer.id ? { ...p, trickShotAvailable: true } : p),
       }))
       const roll = Math.ceil(Math.random() * 6)
-      const count = Math.floor(roll / 2)
+      const count = Math.max(1, Math.floor(roll / 2))
       const st = get()
       const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
       set(s => ({
