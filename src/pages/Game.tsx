@@ -8,6 +8,7 @@ import { OpponentSidebar } from '../components/OpponentSidebar'
 import { CLASSES } from '../data/classes'
 import { supabase } from '../lib/supabase'
 import { abandonRoom } from '../lib/rooms'
+import type { Player, ResourceCard } from '../types'
 
 const PAWN_COLORS = ['bg-red-500','bg-blue-500','bg-green-500','bg-yellow-400','bg-purple-500','bg-pink-500']
 
@@ -22,7 +23,10 @@ interface Props {
 }
 
 export function Game({ localPlayerName, roomId, onLeave }: Props) {
-  const { players, round, nextRound, resetGame, activePlayerId, setActivePlayer, currentTurnPlayerId } = useGameStore()
+  const {
+    players, round, nextRound, resetGame, activePlayerId, setActivePlayer,
+    currentTurnPlayerId, startingDraft, completeStartingDraftPick,
+  } = useGameStore()
 
   const isOnline = !!localPlayerName && !!roomId
 
@@ -113,6 +117,27 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
           Back to Menu
         </button>
       </div>
+    )
+  }
+
+  if (startingDraft) {
+    const currentDrafterId = startingDraft.pickOrder[startingDraft.pickIndex]
+    const currentDrafter = players.find(p => p.id === currentDrafterId)
+    const canDraft = !localPlayerName || localPlayer?.id === currentDrafterId
+    return (
+      <StartingDraftScreen
+        players={players}
+        localPlayerName={localPlayerName}
+        currentDrafterId={currentDrafterId}
+        currentDrafterName={currentDrafter?.name ?? 'Player'}
+        canDraft={canDraft}
+        draft={startingDraft}
+        onPick={(cardId) => completeStartingDraftPick(currentDrafterId, cardId)}
+        onLeave={() => {
+          if (isOnline) setShowLeaveConfirm(true)
+          else if (confirm('End the game and return to lobby?')) { resetGame(); onLeave?.() }
+        }}
+      />
     )
   }
 
@@ -212,17 +237,6 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
         </div>
       </div>
 
-      {/* Multiplayer sync debug — visible only when localPlayerName is set (online mode) */}
-      {localPlayerName && (
-        <div className="text-[10px] font-mono bg-black/60 text-parchment-400 px-2 py-0.5 rounded flex gap-3 flex-wrap">
-          <span>me: <b className="text-parchment-100">{localPlayerName}</b></span>
-          <span>myId: <b className="text-parchment-100">{localPlayer?.id ?? '(not found)'}</b></span>
-          <span>turn: <b className="text-parchment-100">{currentTurnPlayerId || '(empty)'}</b></span>
-          <span>canAct: <b className={isMyTurn ? 'text-green-400' : 'text-red-400'}>{String(isMyTurn)}</b></span>
-          <span>players: <b className="text-parchment-100">{players.length}</b></span>
-        </div>
-      )}
-
       {/* Board — full width */}
       <SharedBoard canAct={isMyTurn} localPlayerName={localPlayerName} />
 
@@ -284,4 +298,159 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
       </div>
     </div>
   )
+}
+
+function StartingDraftScreen({
+  players,
+  localPlayerName,
+  currentDrafterId,
+  currentDrafterName,
+  canDraft,
+  draft,
+  onPick,
+  onLeave,
+}: {
+  players: Player[]
+  localPlayerName?: string
+  currentDrafterId: string
+  currentDrafterName: string
+  canDraft: boolean
+  draft: NonNullable<ReturnType<typeof useGameStore.getState>['startingDraft']>
+  onPick: (cardId: string) => void
+  onLeave: () => void
+}) {
+  const currentPickNumber = draft.pickIndex + 1
+  const totalPicks = draft.pickOrder.length
+  const nextDrafterId = draft.pickOrder[draft.pickIndex + 1]
+  const nextDrafter = players.find(p => p.id === nextDrafterId)
+
+  return (
+    <div className="min-h-screen p-4 space-y-4">
+      <div className="panel px-4 py-3 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="font-display font-bold text-gold-400 text-xl tracking-wide">Starting Resource Draft</h1>
+          <div className="text-sm text-parchment-400">
+            Snake draft: first to last, then back again. Each player drafts 2 cards for their starting windows.
+          </div>
+        </div>
+        <button onClick={onLeave} className="btn-secondary text-xs px-3 py-1.5">Lobby</button>
+      </div>
+
+      <div className="grid grid-cols-[320px_minmax(0,1fr)] gap-4">
+        <div className="panel p-4 space-y-4">
+          <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Current Pick</div>
+          <div className="flex items-center gap-3">
+            <img
+              src={markerSrc(players.find(p => p.id === currentDrafterId)?.classId ?? '')}
+              alt={currentDrafterName}
+              className="w-16 h-16 rounded-full border-2 border-gold-400 object-cover"
+            />
+            <div>
+              <div className="text-2xl font-display font-bold text-parchment-100">{currentDrafterName}</div>
+              <div className="text-sm text-gold-300">Pick {currentPickNumber} of {totalPicks}</div>
+            </div>
+          </div>
+
+          <div className={`rounded-lg border px-3 py-2 text-sm ${canDraft ? 'border-green-500/50 bg-green-950/30 text-green-200' : 'border-amber-500/40 bg-amber-950/20 text-amber-200'}`}>
+            {canDraft
+              ? 'Choose one card from the draft pool.'
+              : localPlayerName
+                ? `Waiting for ${currentDrafterName} to pick.`
+                : `${currentDrafterName} is up.`
+            }
+          </div>
+
+          {nextDrafter && (
+            <div className="text-xs text-parchment-500">
+              Next: <span className="text-parchment-200 font-semibold">{nextDrafter.name}</span>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Draft Order</div>
+            <div className="flex flex-wrap gap-1.5">
+              {draft.pickOrder.map((playerId, i) => {
+                const p = players.find(pl => pl.id === playerId)
+                return (
+                  <div
+                    key={`${playerId}-${i}`}
+                    className={`px-2 py-1 rounded border text-xs ${
+                      i === draft.pickIndex
+                        ? 'bg-gold-500/25 border-gold-400 text-gold-100'
+                        : i < draft.pickIndex
+                          ? 'bg-ink-900/70 border-parchment-800/40 text-parchment-600 line-through'
+                          : 'bg-ink-900/70 border-parchment-800/40 text-parchment-300'
+                    }`}
+                  >
+                    {p?.name ?? '?'}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Picked Cards</div>
+            {players.map(p => (
+              <div key={p.id} className="rounded-lg bg-ink-900/60 border border-parchment-800/30 p-2">
+                <div className="text-xs font-semibold text-parchment-200 mb-1">{p.name}</div>
+                <div className="flex gap-1.5">
+                  {Array.from({ length: 2 }, (_, i) => {
+                    const card = draft.picks[p.id]?.[i]
+                    return card ? (
+                      <MiniDraftCard key={i} card={card} />
+                    ) : (
+                      <div key={i} className="w-12 h-16 rounded border border-dashed border-parchment-800/50 bg-ink-950/50" />
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Draft Pool</div>
+              <div className="text-sm text-parchment-400">{draft.cards.length} card{draft.cards.length !== 1 ? 's' : ''} remaining</div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {draft.cards.map(card => (
+              <button
+                key={card.id}
+                type="button"
+                onClick={() => canDraft && onPick(card.id)}
+                disabled={!canDraft}
+                className="group rounded-lg border border-parchment-800/40 bg-ink-900/60 p-2 text-left transition-all hover:border-gold-400/80 hover:bg-ink-800 disabled:opacity-60 disabled:hover:border-parchment-800/40 disabled:hover:bg-ink-900/60"
+              >
+                <img src={card.imageFile} alt={card.name} className="w-full aspect-[5/7] object-cover rounded border border-parchment-800/40" />
+                <div className="mt-2 text-sm font-semibold text-parchment-100 leading-tight">{card.name}</div>
+                <div className="mt-1 flex items-center gap-2 text-xs">
+                  <span className="text-gold-300">${card.value}</span>
+                  <span className="text-parchment-500">{card.type}</span>
+                  {card.repTokens > 0 && <span className="text-green-300">+{card.repTokens} rep</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MiniDraftCard({ card }: { card: ResourceCard }) {
+  return (
+    <div className="w-12">
+      <img src={card.imageFile} alt={card.name} className="w-12 h-16 rounded object-cover border border-parchment-700/50" />
+      <div className="text-[9px] text-parchment-400 truncate mt-0.5">{card.name}</div>
+    </div>
+  )
+}
+
+function markerSrc(classId: string) {
+  const name = classId.charAt(0).toUpperCase() + classId.slice(1)
+  return `/cards/tokens/${name}.png`
 }

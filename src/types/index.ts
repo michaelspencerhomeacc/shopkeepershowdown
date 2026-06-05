@@ -157,6 +157,12 @@ export interface GameState {
   resourceDeck: ResourceCard[]
   resourceDiscard: ResourceCard[]
   fleaMarket: (ResourceCard | null)[]
+  startingDraft: {
+    cards: ResourceCard[]
+    pickOrder: string[]
+    pickIndex: number
+    picks: Record<string, ResourceCard[]>
+  } | null
 
   visitorDeck: VisitorCard[]
   visitorDiscard: VisitorCard[]

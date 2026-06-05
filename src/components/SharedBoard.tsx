@@ -26,6 +26,70 @@ const TYPE_CHIP: Record<string, string> = {
 }
 const TYPE_ICON: Record<string, string> = { ARM: '⚔️', CON: '🧪', TRI: '💎', TRG: '📦' }
 
+const CLASS_THEME: Record<string, { panel: string; border: string; text: string; glow: string }> = {
+  barbarian: { panel: 'bg-red-950/95', border: 'border-red-400', text: 'text-red-200', glow: 'shadow-red-900/70' },
+  monk:      { panel: 'bg-amber-950/95', border: 'border-amber-400', text: 'text-amber-200', glow: 'shadow-amber-900/70' },
+  paladin:   { panel: 'bg-blue-950/95', border: 'border-blue-400', text: 'text-blue-200', glow: 'shadow-blue-900/70' },
+  ranger:    { panel: 'bg-green-950/95', border: 'border-green-400', text: 'text-green-200', glow: 'shadow-green-900/70' },
+  rogue:     { panel: 'bg-purple-950/95', border: 'border-purple-400', text: 'text-purple-200', glow: 'shadow-purple-900/70' },
+  shaman:    { panel: 'bg-teal-950/95', border: 'border-teal-400', text: 'text-teal-200', glow: 'shadow-teal-900/70' },
+  sorcerer:  { panel: 'bg-violet-950/95', border: 'border-violet-400', text: 'text-violet-200', glow: 'shadow-violet-900/70' },
+  warlock:   { panel: 'bg-indigo-950/95', border: 'border-indigo-400', text: 'text-indigo-200', glow: 'shadow-indigo-900/70' },
+}
+
+const DEFAULT_CLASS_THEME = { panel: 'bg-ink-950/95', border: 'border-gold-400', text: 'text-gold-200', glow: 'shadow-black/70' }
+
+function playSfx(kind: 'turn' | 'coin' | 'steal' | 'break' | 'lightning') {
+  if (typeof window === 'undefined') return
+  const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!AudioCtx) return
+  try {
+    const ctx = new AudioCtx()
+    const now = ctx.currentTime
+    const master = ctx.createGain()
+    master.connect(ctx.destination)
+    master.gain.setValueAtTime(0.0001, now)
+    master.gain.exponentialRampToValueAtTime(0.7, now + 0.02)
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.85)
+
+    const tone = (freq: number, start: number, dur: number, type: OscillatorType, volume: number) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = type
+      osc.frequency.setValueAtTime(freq, now + start)
+      gain.gain.setValueAtTime(0.0001, now + start)
+      gain.gain.exponentialRampToValueAtTime(volume, now + start + 0.015)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + dur)
+      osc.connect(gain)
+      gain.connect(master)
+      osc.start(now + start)
+      osc.stop(now + start + dur + 0.03)
+    }
+
+    if (kind === 'lightning') {
+      tone(90, 0, 0.55, 'sawtooth', 0.22)
+      tone(48, 0.08, 0.7, 'triangle', 0.28)
+      tone(620, 0.02, 0.08, 'square', 0.09)
+    } else if (kind === 'break') {
+      tone(130, 0, 0.18, 'sawtooth', 0.18)
+      tone(76, 0.05, 0.28, 'square', 0.16)
+    } else if (kind === 'steal') {
+      tone(760, 0, 0.08, 'sine', 0.12)
+      tone(1120, 0.06, 0.12, 'sine', 0.09)
+    } else if (kind === 'coin') {
+      tone(880, 0, 0.09, 'sine', 0.1)
+      tone(1320, 0.08, 0.12, 'sine', 0.08)
+    } else {
+      tone(523, 0, 0.09, 'sine', 0.08)
+      tone(784, 0.08, 0.16, 'sine', 0.08)
+    }
+
+    window.setTimeout(() => ctx.close().catch(() => {}), 1000)
+  } catch {
+    // Browsers may block audio until the first user gesture.
+  }
+}
+
 export const LOCATIONS: { id: Location; label: string }[] = [
   { id: 'guildhall',     label: 'Guildhall' },
   { id: 'tavern',        label: 'Tavern' },
@@ -109,11 +173,19 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
   const [shatterInfo, setShatterInfo] = useState<{ windowLines: string[]; cause: string } | null>(null)
   const prevWindowsRef = useRef<{ id: string; windows: Player['windows'] }[]>([])
   // Steal toast notification
-  const [stealToast, setStealToast] = useState<{
+  const [stealToasts, setStealToasts] = useState<Array<{
+    id: string
     aggressorClassId: string; aggressorName: string
     victimClassId: string; victimName: string
     cardName: string; cardImageFile: string | null
-  } | null>(null)
+  }>>([])
+  const [breakToasts, setBreakToasts] = useState<Array<{
+    id: string
+    victimName: string
+    victimClassId: string
+    windowText: string
+    cause: string
+  }>>([])
   const prevLogIdRef = useRef<string | null>(null)
   // Night Watcher transfer toast
   const [nightWatcherToast, setNightWatcherToast] = useState<{
@@ -124,13 +196,16 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     players.find(p => p.hasNightWatcher)?.id ?? null
   )
   // "Your Turn" toast — shown to the local player when their turn begins
-  const [yourTurnToast, setYourTurnToast] = useState(false)
+  const [yourTurnPromptId, setYourTurnPromptId] = useState<string | null>(null)
   // Coin gain toast — shown whenever a player gains coins
-  const [passiveCoinToast, setPassiveCoinToast] = useState<{
+  const [coinToasts, setCoinToasts] = useState<Array<{
+    id: string
     playerName: string; playerClassId: string; amount: number; source: string
-  } | null>(null)
+  }>>([])
   // Separate log-id ref for coin toast (avoids sharing state with steal-toast ref)
   const prevCoinLogRef = useRef<string | null>(null)
+  const prevCoinsRef = useRef<Record<string, number> | null>(null)
+  const prevLightningRef = useRef<string | null>(null)
   // Clan toll gate: set before opening the action panel; null = no gate active
   const [clanGate, setClanGate] = useState<{ barbarianId: string; location: Location } | null>(null)
   // Clan toll is committed only when the player completes an action, not when they open the panel
@@ -147,11 +222,32 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
   // Bottom-left activity feed
   const [activityFeed, setActivityFeed] = useState<Array<{ id: string; text: string }>>([])
   const prevActivityLogRef = useRef<string | null>(null)
-  const prevTurnRef = useRef<string | null>(currentTurnPlayerId)
+  const prevTurnRef = useRef<string | null>(null)
 
   // Hoard overflow: first player with more than 8 cards must discard before play continues
   const overflowPlayer = players.find(p => p.hoard.length > 8) ?? null
   const patienceForagePeek = foragePeek?.source === 'patience' ? foragePeek : null
+
+  function pushStealToast(toast: Omit<(typeof stealToasts)[number], 'id'>) {
+    const id = `${Date.now()}-${Math.random()}`
+    setStealToasts(prev => [{ id, ...toast }, ...prev].slice(0, 3))
+    playSfx('steal')
+    setTimeout(() => setStealToasts(prev => prev.filter(t => t.id !== id)), 4000)
+  }
+
+  function pushBreakToast(toast: Omit<(typeof breakToasts)[number], 'id'>) {
+    const id = `${Date.now()}-${Math.random()}`
+    setBreakToasts(prev => [{ id, ...toast }, ...prev].slice(0, 3))
+    playSfx('break')
+    setTimeout(() => setBreakToasts(prev => prev.filter(t => t.id !== id)), 4200)
+  }
+
+  function pushCoinToast(toast: Omit<(typeof coinToasts)[number], 'id'>) {
+    const id = `${Date.now()}-${Math.random()}`
+    setCoinToasts(prev => [{ id, ...toast }, ...prev].slice(0, 4))
+    playSfx('coin')
+    setTimeout(() => setCoinToasts(prev => prev.filter(t => t.id !== id)), 4000)
+  }
 
   // Auto-open sell phase when the active player changes (from round 2) — only for the acting player
   useEffect(() => {
@@ -174,12 +270,14 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       ? players.filter(p => p.name === localPlayerName)  // online: only local player
       : players                                           // local: any player
     const windowLines: string[] = []
+    const brokenEvents: Array<{ player: Player; windowIdx: number; cardName?: string }> = []
     watchedPlayers.forEach(p => {
       const prevEntry = prev.find(e => e.id === p.id)
       if (!prevEntry) return
       p.windows.forEach((w, i) => {
         if (w.status === 'broken' && prevEntry.windows[i]?.status !== 'broken') {
           windowLines.push(`${p.name}'s Window ${i + 1}${w.card ? ` (${w.card.name})` : ''} shattered!`)
+          brokenEvents.push({ player: p, windowIdx: i, cardName: w.card?.name })
         }
       })
     })
@@ -189,6 +287,14 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     if (windowLines.length > 0) {
       // The most recent log entry describes who caused the break
       const cause = actionLog[0]?.message ?? ''
+      brokenEvents.forEach(event => {
+        pushBreakToast({
+          victimName: event.player.name,
+          victimClassId: event.player.classId,
+          windowText: `Window ${event.windowIdx + 1}${event.cardName ? ` - ${event.cardName}` : ''}`,
+          cause,
+        })
+      })
       setShatterInfo({ windowLines, cause })
       const t = setTimeout(() => setShatterInfo(null), 2800)
       return () => clearTimeout(t)
@@ -210,6 +316,17 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     if (newEntries.length === 0) return
     prevLogIdRef.current = actionLog[0].id
 
+    function findCardImage(cardName: string) {
+      for (const p of players) {
+        const hoardCard = p.hoard.find(c => c.name === cardName)
+        if (hoardCard) return hoardCard.imageFile
+        const windowCard = p.windows.find(w => w.card?.name === cardName)?.card
+        if (windowCard) return windowCard.imageFile
+      }
+      const fleaCard = fleaMarket.find(c => c?.name === cardName)
+      return fleaCard?.imageFile ?? null
+    }
+
     for (const entry of newEntries) {
       const msg = entry.message
       if (msg.includes('Night Watcher blocked') || msg.includes('from the Flea Market')) continue
@@ -224,18 +341,14 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       if (!victim) continue
 
       const aggressor = entry.playerId ? players.find(p => p.id === entry.playerId) : null
-      const cardImageFile = aggressor?.hoard.find(c => c.name === cardName)?.imageFile ?? null
-
-      setStealToast({
+      pushStealToast({
         aggressorClassId: aggressor?.classId ?? 'unknown',
         aggressorName: aggressor?.name ?? '?',
         victimClassId: victim.classId,
         victimName: victim.name,
         cardName,
-        cardImageFile,
+        cardImageFile: findCardImage(cardName),
       })
-      const t = setTimeout(() => setStealToast(null), 4000)
-      return () => clearTimeout(t)  // only show one steal toast per batch
     }
   }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -254,9 +367,18 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     return () => clearTimeout(t)
   }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const key = shamanCallLightning ? `${shamanCallLightning.shamanId}-${shamanCallLightning.targetId}` : null
+    if (!key || key === prevLightningRef.current) return
+    prevLightningRef.current = key
+    playSfx('lightning')
+  }, [shamanCallLightning])
+
   // Coin gain toast: fires whenever a player gains coins from any source.
   // Uses its own ref (prevCoinLogRef) to avoid conflicts with the steal-toast ref.
   useEffect(() => {
+    // Coin changes are handled by the player-state diff below so batched/multi-player gains are reliable.
+    return
     if (actionLog.length === 0) return
     const latest = actionLog[0]
     if (latest.id === prevCoinLogRef.current) return
@@ -283,11 +405,30 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       const recipient = latest.playerId ? players.find(p => p.id === latest.playerId) : null
       if (!recipient) continue
       const displaySource = source || (msg.length > 60 ? msg.slice(0, 58) + '…' : msg)
-      setPassiveCoinToast({ playerName: recipient.name, playerClassId: recipient.classId, amount, source: displaySource })
-      const t = setTimeout(() => setPassiveCoinToast(null), 4000)
-      return () => clearTimeout(t)
+      pushCoinToast({ playerName: recipient.name, playerClassId: recipient.classId, amount, source: displaySource })
     }
   }, [actionLog]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const previous = prevCoinsRef.current
+    const next = Object.fromEntries(players.map(p => [p.id, p.coins]))
+    prevCoinsRef.current = next
+    if (!previous) return
+
+    const source = actionLog[0]?.message ?? ''
+    players.forEach(p => {
+      const before = previous[p.id]
+      if (before === undefined) return
+      const gained = p.coins - before
+      if (gained <= 0) return
+      pushCoinToast({
+        playerName: p.name,
+        playerClassId: p.classId,
+        amount: gained,
+        source: source.length > 70 ? source.slice(0, 68) + '...' : source,
+      })
+    })
+  }, [players]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Activity feed helper — push a notification that auto-dismisses after 3.8 s
   function pushActivity(text: string) {
@@ -302,11 +443,10 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     prevTurnRef.current = currentTurnPlayerId
     const player = players.find(p => p.id === currentTurnPlayerId)
     if (player) pushActivity(`✨ ${player.name}'s turn`)
-    // Show prominent "Your Turn" banner only for the local player
-    if (localPlayerName && player?.name === localPlayerName) {
-      setYourTurnToast(true)
-      const t = setTimeout(() => setYourTurnToast(false), 3000)
-      return () => clearTimeout(t)
+    // Show prominent "Your Turn" prompt for the player using this screen.
+    if (player && (!localPlayerName || player.name === localPlayerName)) {
+      setYourTurnPromptId(player.id)
+      playSfx('turn')
     }
   }, [currentTurnPlayerId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -351,6 +491,10 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
   const maxActions = 3 + bonusActionsThisTurn
   const actionsLeft = Math.max(0, maxActions - turnActionsUsed)
   const turnOver = turnActionsUsed >= maxActions
+  const yourTurnToast = false
+  const stealToast = stealToasts[0] ?? null
+  const passiveCoinToast = coinToasts[0] ?? null
+  const currentTheme = currentPlayer ? (CLASS_THEME[currentPlayer.classId] ?? DEFAULT_CLASS_THEME) : DEFAULT_CLASS_THEME
 
   function playerIdx(playerId: string) {
     return players.findIndex(p => p.id === playerId)
@@ -409,7 +553,34 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       )}
 
       {/* Top-centre notification stack — steal toast + Night Watcher toast + coin toast */}
-      {(stealToast || nightWatcherToast || passiveCoinToast) && (
+      {yourTurnPromptId && (() => {
+        const player = players.find(p => p.id === yourTurnPromptId)
+        if (!player) return null
+        const theme = CLASS_THEME[player.classId] ?? DEFAULT_CLASS_THEME
+        return (
+          <button
+            type="button"
+            onClick={() => setYourTurnPromptId(null)}
+            className="fixed inset-0 z-[592] flex items-center justify-center bg-black/45 backdrop-blur-[1px] px-4"
+          >
+            <div className={`your-turn-prompt ${theme.panel} ${theme.border} border-2 rounded-2xl px-10 py-7 shadow-2xl ${theme.glow} text-center min-w-[320px] max-w-[92vw]`}>
+              <img
+                src={markerSrc(player.classId)}
+                alt={player.name}
+                className={`w-24 h-24 rounded-full object-cover border-2 ${theme.border} mx-auto mb-4 shadow-lg`}
+              />
+              <div className={`text-sm uppercase tracking-[0.28em] font-bold ${theme.text}`}>Your Turn</div>
+              <div className="text-4xl font-display font-bold text-parchment-100 mt-1">{player.name}'s Turn</div>
+              <div className="text-parchment-300 text-sm font-semibold mt-3">
+                Round {round} · {actionsLeft}/{maxActions} actions left
+              </div>
+              <div className="text-parchment-400 text-sm mt-4">Click to Continue</div>
+            </div>
+          </button>
+        )
+      })()}
+
+      {(stealToasts.length > 0 || breakToasts.length > 0 || nightWatcherToast || coinToasts.length > 0) && (
         <div className="fixed top-8 left-0 right-0 flex flex-col items-center gap-3 z-[590] pointer-events-none">
 
           {/* Steal toast */}
@@ -462,6 +633,23 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                 <span className="text-sm text-parchment-300 max-w-[100px] truncate">{stealToast.victimName}</span>
               </div>
             </div>
+            )
+          })()}
+
+          {breakToasts[0] && (() => {
+            const toast = breakToasts[0]
+            const theme = CLASS_THEME[toast.victimClassId] ?? DEFAULT_CLASS_THEME
+            return (
+              <div className={`steal-toast ${theme.panel} ${theme.border} border-2 rounded-2xl px-7 py-5 shadow-2xl ${theme.glow} flex items-center gap-4`}>
+                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-red-400/80 shadow-lg flex-shrink-0">
+                  <img src={markerSrc(toast.victimClassId)} alt={toast.victimName} className="w-full h-full object-cover" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <div className="text-red-300 font-display font-bold text-xl leading-tight">Window Broken</div>
+                  <div className="text-parchment-100 text-sm font-semibold">{toast.victimName} - {toast.windowText}</div>
+                  {toast.cause && <div className="text-parchment-400 text-xs leading-snug max-w-[360px]">{toast.cause}</div>}
+                </div>
+              </div>
             )
           })()}
 
@@ -589,29 +777,37 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       )}
 
       {/* Turn banner */}
-      <div className="panel px-3 py-2 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      <div className={`panel px-3 py-2 flex items-center justify-between gap-3 border-2 ${currentTheme.border}`}>
+        <div className="flex items-center gap-3 min-w-0">
+          {currentPlayer && (
+            <img
+              src={markerSrc(currentPlayer.classId)}
+              alt={currentPlayer.name}
+              className={`w-11 h-11 rounded-full object-cover border-2 ${currentTheme.border} flex-shrink-0`}
+            />
+          )}
           <div>
-            <div className="text-[10px] text-parchment-500 uppercase tracking-wide">Current Turn</div>
-            <div className="text-sm font-display font-semibold text-parchment-100">
+            <div className={`text-[10px] uppercase tracking-widest font-bold ${currentTheme.text}`}>Current Turn</div>
+            <div className="text-lg font-display font-bold text-parchment-100">
               {currentPlayer?.name ?? '—'}
             </div>
           </div>
-          <div className="flex gap-1.5 items-center">
-            {Array.from({ length: 3 }, (_, i) => (
+          <div className="flex gap-2 items-center rounded-lg bg-ink-950/50 border border-parchment-800/40 px-3 py-1.5">
+            <div className="text-xl font-display font-bold text-gold-300 tabular-nums">{actionsLeft}/{maxActions}</div>
+            <div className="flex gap-1.5 items-center">
+            {Array.from({ length: maxActions }, (_, i) => (
               <div
                 key={i}
                 className={`w-4 h-4 rounded-full border-2 transition-all ${
                   i < actionsLeft
-                    ? 'bg-gold-400/80 border-gold-300'
+                    ? 'bg-gold-400/80 border-gold-300 shadow shadow-gold-900/40'
                     : 'bg-ink-700 border-parchment-700/30 opacity-40'
                 }`}
                 title={`Action ${i + 1}`}
               />
             ))}
-            <span className="text-xs text-parchment-500 ml-1">
-              {actionsLeft} action{actionsLeft !== 1 ? 's' : ''} left
-            </span>
+            </div>
+            <span className="text-xs text-parchment-500">actions left</span>
           </div>
           {round >= 2 && !sellPhaseDone && canAct && (
             <button

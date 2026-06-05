@@ -25,6 +25,11 @@ function isBreakableWindowIndex(index: number) {
   return index > 0 && index < 4
 }
 
+function startingDraftOrder(players: Player[]) {
+  const ids = players.map(p => p.id)
+  return [...ids, ...ids.slice().reverse()]
+}
+
 function makePlayer(id: string, name: string, classId: ClassId): Player {
   const windows = Array.from({ length: 5 }, (_, i) => ({
     id: `${id}-w${i}`,
@@ -119,16 +124,8 @@ function buildInitialGameState(players: Player[]): GameState {
   // Professional slots: 3 face-up (fixed for the whole game)
   const professionalSlots = shuffle(PROFESSIONAL_CARDS).slice(0, 3)
 
-  // Deal 2 starting resources into each player's windows
-  // Windows 0 and 4 start shuttered for all players except the first (it's not their turn yet)
-  players.forEach((p, playerIdx) => {
-    const dealt = resourceDeck.splice(0, 2)
-    p.windows = p.windows.map((w, i) => ({
-      ...w,
-      card: dealt[i] ?? null,
-      status: (playerIdx > 0 && (i === 0 || i === 4)) ? 'shuttered' : 'normal',
-    }))
-  })
+  const draftCards = resourceDeck.splice(0, players.length * 2)
+  const draftOrder = startingDraftOrder(players)
 
   // Night Watcher starts unassigned.  It moves automatically to whoever was
   // most recently stolen from or had a window broken — protecting them from the
@@ -148,16 +145,22 @@ function buildInitialGameState(players: Player[]): GameState {
     resourceDeck,
     resourceDiscard: [],
     fleaMarket: [...fleaMarket, null].slice(0, 5),
+    startingDraft: draftCards.length > 0 ? {
+      cards: draftCards,
+      pickOrder: draftOrder,
+      pickIndex: 0,
+      picks: Object.fromEntries(players.map(p => [p.id, []])),
+    } : null,
     visitorDeck,
     visitorDiscard: [],
     activeVisitors: [...activeVisitors, null, null].slice(0, 3),
     professionalSlots,
     workOrderDeck,
-    actionLog: [logEntry('Game started. Good luck, shopkeepers!')],
+    actionLog: [logEntry(draftCards.length > 0 ? 'Starting resource snake draft began.' : 'Game started. Good luck, shopkeepers!')],
     diceResult: null,
     townCrierPeek: null,
     visitorDemandRemaining,
-    currentTurnPlayerId: players[0]?.id ?? '',
+    currentTurnPlayerId: draftOrder[0] ?? players[0]?.id ?? '',
     turnActionsUsed: 0,
     locationsUsedThisTurn: [],
     sellPhaseDone: false,
@@ -187,6 +190,7 @@ function buildInitialGameState(players: Player[]): GameState {
 interface GameStore extends GameState {
   // Lobby actions
   startGame: (players: Array<{ name: string; classId: ClassId }>) => void
+  completeStartingDraftPick: (playerId: string, cardId: string) => void
   resetGame: () => void
 
   // Active player
@@ -364,6 +368,7 @@ const INITIAL: GameState = {
   resourceDeck: [],
   resourceDiscard: [],
   fleaMarket: [null, null, null, null, null],
+  startingDraft: null,
   visitorDeck: [],
   visitorDiscard: [],
   activeVisitors: [null, null, null],
@@ -481,6 +486,55 @@ function _applyTrickShotRoll(
   }
 }
 
+function applyFirstTurnStartBonuses(get: () => GameStore, set: (partial: Partial<GameStore> | ((state: GameStore) => Partial<GameStore>)) => void) {
+  const { players } = get()
+  const firstPlayer = players[0]
+  if (!firstPlayer) return
+
+  if (firstPlayer.classId === 'barbarian') {
+    const brokenCount = players.reduce(
+      (sum, p) => sum + p.windows.filter(w => w.status === 'broken').length, 0
+    )
+    const coins = Math.max(1, brokenCount)
+    set(s => ({
+      players: s.players.map(p =>
+        p.id === firstPlayer.id ? { ...p, coins: p.coins + coins } : p
+      ),
+      actionLog: [
+        logEntry(
+          `${firstPlayer.name}'s Fearsome Champion â€” gained ${coins} coin${coins > 1 ? 's' : ''} (${brokenCount} broken window${brokenCount !== 1 ? 's' : ''} on board).`,
+          firstPlayer.id
+        ),
+        ...s.actionLog.slice(0, 49),
+      ],
+    }))
+  }
+
+  if (firstPlayer.classId === 'ranger') {
+    set(s => ({
+      players: s.players.map(p => p.id === firstPlayer.id ? { ...p, trickShotAvailable: true } : p),
+    }))
+    const roll = Math.ceil(Math.random() * 6)
+    const count = Math.max(1, Math.floor(roll / 2))
+    const st = get()
+    const { drawn, deck, discard } = drawCards(st.resourceDeck, st.resourceDiscard, count, 0, Infinity)
+    set(s => ({
+      resourceDeck: deck,
+      resourceDiscard: discard,
+      lastDrawnCards: drawn,
+      players: drawn.length > 0
+        ? s.players.map(p => p.id !== firstPlayer.id ? p : { ...p, hoard: [...p.hoard, ...drawn] })
+        : s.players,
+      actionLog: [logEntry(
+        drawn.length > 0
+          ? `${firstPlayer.name}'s Master of the Wilderness â€” rolled ${roll}, drew ${drawn.length} resource${drawn.length !== 1 ? 's' : ''} free.`
+          : `${firstPlayer.name}'s Master of the Wilderness â€” rolled ${roll} (0 free resources).`,
+        firstPlayer.id
+      ), ...s.actionLog.slice(0, 49)],
+    }))
+  }
+}
+
 export const useGameStore = create<GameStore>((set, get) => ({
   ...INITIAL,
 
@@ -501,6 +555,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }).join(', ')}. ${orderedPlayers[0].name} goes first!`),
     ]
     set(state)
+    if (state.startingDraft) return
     // Barbarian passive: advanceTurn normally fires this on each turn start, but startGame
     // bypasses advanceTurn for the first turn — apply it explicitly here.
     const firstPlayer = orderedPlayers[0]
@@ -546,6 +601,65 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ), ...s.actionLog.slice(0, 49)],
       }))
     }
+  },
+
+  completeStartingDraftPick(playerId, cardId) {
+    const { startingDraft, players } = get()
+    if (!startingDraft) return
+    const currentPickerId = startingDraft.pickOrder[startingDraft.pickIndex]
+    if (currentPickerId !== playerId) return
+    const card = startingDraft.cards.find(c => c.id === cardId)
+    if (!card) return
+
+    const nextPicks = {
+      ...startingDraft.picks,
+      [playerId]: [...(startingDraft.picks[playerId] ?? []), card],
+    }
+    const nextCards = startingDraft.cards.filter(c => c.id !== cardId)
+    const nextPickIndex = startingDraft.pickIndex + 1
+    const picker = players.find(p => p.id === playerId)
+
+    if (nextPickIndex < startingDraft.pickOrder.length && nextCards.length > 0) {
+      const nextPickerId = startingDraft.pickOrder[nextPickIndex]
+      set(s => ({
+        startingDraft: {
+          cards: nextCards,
+          pickOrder: startingDraft.pickOrder,
+          pickIndex: nextPickIndex,
+          picks: nextPicks,
+        },
+        currentTurnPlayerId: nextPickerId,
+        activePlayerId: nextPickerId,
+        actionLog: [
+          logEntry(`${picker?.name ?? 'A player'} drafted ${card.name}.`, playerId),
+          ...s.actionLog.slice(0, 49),
+        ],
+      }))
+      return
+    }
+
+    const firstPlayerId = players[0]?.id ?? ''
+    set(s => ({
+      startingDraft: null,
+      players: s.players.map((p, playerIdx) => {
+        const drafted = nextPicks[p.id] ?? []
+        return {
+          ...p,
+          windows: p.windows.map((w, i) => ({
+            ...w,
+            card: i < 2 ? drafted[i] ?? null : w.card,
+            status: (playerIdx > 0 && (i === 0 || i === 4)) ? 'shuttered' as WindowStatus : 'normal' as WindowStatus,
+          })),
+        }
+      }),
+      currentTurnPlayerId: firstPlayerId,
+      activePlayerId: firstPlayerId,
+      actionLog: [
+        logEntry(`${picker?.name ?? 'A player'} drafted ${card.name}. Starting draft complete. Game started. Good luck, shopkeepers!`, playerId),
+        ...s.actionLog.slice(0, 49),
+      ],
+    }))
+    applyFirstTurnStartBonuses(get, set)
   },
 
   resetGame() {
