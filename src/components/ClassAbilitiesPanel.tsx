@@ -41,7 +41,8 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
   const [appraiseSelected, setAppraiseSelected] = useState<string[]>([])
 
   const otherPlayers = players.filter(p => p.id !== player.id)
-  const targetPlayer = players.find(p => p.id === swingTarget) ?? otherPlayers[0]
+  const swingTargets = otherPlayers.filter(p => !p.hasNightWatcher)
+  const targetPlayer = swingTargets.find(p => p.id === swingTarget) ?? swingTargets[0]
   const canAct = isActiveTurn && player.activeTokens >= 1
   const swingUsed = classAbilitiesUsedThisTurn.includes('recklessSwing')
   const raidUsed = classAbilitiesUsedThisTurn.includes('raidingParty')
@@ -53,12 +54,12 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
   const wouldBreakTwo = theirRep > myRep
 
   const breakableWindows = targetPlayer
-    ? targetPlayer.windows.map((w, i) => ({ w, i })).filter(({ w }) => w.status !== 'shuttered')
+    ? targetPlayer.windows.map((w, i) => ({ w, i })).filter(({ w, i }) => i > 0 && i < 4 && w.status === 'normal')
     : []
 
   function firstBreakableIdx(playerId: string) {
     return players.find(p => p.id === playerId)?.windows
-      .map((w, i) => ({ w, i })).filter(({ w }) => w.status !== 'shuttered')[0]?.i ?? 0
+      .map((w, i) => ({ w, i })).filter(({ w, i }) => i > 0 && i < 4 && w.status === 'normal')[0]?.i ?? 1
   }
 
   // Reset window selectors when target changes
@@ -135,10 +136,10 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
       {/* Active: Reckless Swing */}
       <div>
         <button
-          disabled={!canAct || otherPlayers.length === 0 || swingUsed}
+          disabled={!canAct || swingTargets.length === 0 || swingUsed}
           onClick={() => {
             if (!swingOpen) {
-              const tgt = swingTarget || otherPlayers[0]?.id || ''
+              const tgt = swingTarget || swingTargets[0]?.id || ''
               setSwingWindow1(firstBreakableIdx(tgt))
               setSwingWindow2(null)
             }
@@ -168,7 +169,7 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
           <div className="mt-1 bg-ink-800/60 border border-red-700/30 rounded-xl p-3 space-y-3">
             {/* Target picker */}
             <div className="flex flex-wrap gap-1">
-              {otherPlayers.map(p => (
+              {swingTargets.map(p => (
                 <button
                   key={p.id}
                   type="button"
@@ -183,6 +184,9 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
                 </button>
               ))}
             </div>
+            {otherPlayers.some(p => p.hasNightWatcher) && (
+              <div className="text-xs text-parchment-500 italic">Night Watcher holders cannot be targeted for Break.</div>
+            )}
 
             {wouldBreakTwo && (
               <div className="text-xs text-amber-400 font-semibold">
@@ -191,7 +195,7 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
             )}
 
             {breakableWindows.length === 0 ? (
-              <div className="text-xs text-parchment-600 italic">All their windows are shuttered</div>
+              <div className="text-xs text-parchment-600 italic">No breakable middle windows available.</div>
             ) : (
               <>
                 {/* First window */}
@@ -429,6 +433,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
   const brokenWindows = player.windows
     .map((w, i) => ({ w, i }))
     .filter(({ w }) => w.status === 'broken')
+  const firstBrokenWindowIdx = brokenWindows[0]?.i ?? 0
   const fleaOptions = fleaMarket
     .map((c, i) => ({ c, i }))
     .filter(({ c }) => c !== null)
@@ -498,7 +503,13 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
       }
       if (chosenEffectCount >= patienceSlots) return prev
       if (key === 'draw1') return { ...prev, draw1: true }
-      if (key === 'repair1') return { ...prev, repair1: { windowIdx: patienceRepairIdx } }
+      if (key === 'repair1') {
+        const windowIdx = brokenWindows.some(({ i }) => i === patienceRepairIdx)
+          ? patienceRepairIdx
+          : firstBrokenWindowIdx
+        setPatienceRepairIdx(windowIdx)
+        return { ...prev, repair1: { windowIdx } }
+      }
       if (key === 'trade1') return { ...prev, trade1: { playerCardId: patienceTradeCardId, fleaSlotIdx: patienceTradeFleaIdx } }
       if (key === 'forage2' && !canPatienceForage) return prev
       if (key === 'forage2') return { ...prev, forage2: true }
@@ -510,7 +521,12 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
     // Rebuild effects with latest UI values
     const built: ShamanPatienceEffects = {}
     if (patienceEffects.draw1) built.draw1 = true
-    if (patienceEffects.repair1 !== undefined) built.repair1 = { windowIdx: patienceRepairIdx }
+    if (patienceEffects.repair1 !== undefined) {
+      const windowIdx = brokenWindows.some(({ i }) => i === patienceRepairIdx)
+        ? patienceRepairIdx
+        : firstBrokenWindowIdx
+      built.repair1 = { windowIdx }
+    }
     const tradeableCards = [...player.hoard, ...player.windows.flatMap((w, wi) => w.card && w.status !== 'broken' ? [w.card] : [])]
     if (patienceEffects.trade1 !== undefined) built.trade1 = { playerCardId: patienceTradeCardId || tradeableCards[0]?.id || '', fleaSlotIdx: patienceTradeFleaIdx }
     if (patienceEffects.forage2 && canPatienceForage) built.forage2 = true
@@ -804,7 +820,7 @@ function ShamanAbilities({ player, isActiveTurn }: { player: Player; isActiveTur
               <label className={`flex items-center gap-2 cursor-pointer px-2 py-1 rounded border ${patienceEffects.repair1 !== undefined ? 'bg-orange-900/30 border-orange-600/40' : 'border-parchment-800/30'}`}>
                 <input type="checkbox" checked={patienceEffects.repair1 !== undefined}
                   onChange={() => togglePatienceEffect('repair1')}
-                  disabled={patienceEffects.repair1 === undefined && chosenEffectCount >= patienceSlots}
+                  disabled={patienceEffects.repair1 === undefined && (chosenEffectCount >= patienceSlots || brokenWindows.length === 0)}
                   className="accent-orange-500"
                 />
                 <span className="text-xs text-parchment-300 font-semibold">Repair 1</span>

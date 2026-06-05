@@ -833,40 +833,72 @@ function PolitePromoterUI({ player, onDone }: { player: Player; onDone: () => vo
 
 function ShadySaboteurUI({ player, onDone }: { player: Player; onDone: () => void }) {
   const { players, shadySaboteur } = useGameStore()
-  const others = players.filter(p => p.id !== player.id)
+  const others = players.filter(p => p.id !== player.id && !p.hasNightWatcher)
   const [targetId, setTargetId] = useState(others[0]?.id ?? '')
   const [winIdx, setWinIdx] = useState(
-    () => others[0]?.windows.findIndex(w => !!w.card && w.status !== 'shuttered') ?? 0
+    () => others[0]?.windows.findIndex((w, i) => i > 0 && i < 4 && !!w.card && w.status === 'normal') ?? 1
   )
-  const target = players.find(p => p.id === targetId)
+  const target = others.find(p => p.id === targetId) ?? others[0]
   const win = target?.windows[winIdx]
   const coinGain = win?.card ? Math.floor(win.card.value / 2) : 0
+  const breakableWindows = target?.windows
+    .map((w, i) => ({ w, i }))
+    .filter(({ w, i }) => i > 0 && i < 4 && !!w.card && w.status === 'normal') ?? []
 
   function handleTargetChange(newId: string) {
-    const newTarget = players.find(p => p.id === newId)
-    const firstValid = newTarget?.windows.findIndex(w => !!w.card && w.status !== 'shuttered') ?? 0
+    const newTarget = others.find(p => p.id === newId)
+    const firstValid = newTarget?.windows.findIndex((w, i) => i > 0 && i < 4 && !!w.card && w.status === 'normal') ?? 1
     setTargetId(newId)
-    setWinIdx(firstValid >= 0 ? firstValid : 0)
+    setWinIdx(firstValid >= 0 ? firstValid : 1)
   }
 
   return (
     <div className="space-y-1.5 text-[10px]">
-      <select value={targetId} onChange={e => handleTargetChange(e.target.value)}
-        className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 w-full">
-        {others.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
-      <select value={winIdx} onChange={e => setWinIdx(Number(e.target.value))}
-        className="bg-ink-700 border border-parchment-700/30 rounded px-1.5 py-0.5 text-parchment-200 w-full">
-        {target?.windows.map((w, i) => (
-          <option key={w.id} value={i} disabled={!w.card || w.status === 'shuttered'}>
-            Window {i + 1}{w.status === 'shuttered' ? ' (shuttered)' : w.card ? ` — ${w.card.name} ($${w.card.value}) → +$${Math.floor(w.card.value / 2)}` : ' (empty)'}
-          </option>
+      {players.some(p => p.id !== player.id && p.hasNightWatcher) && (
+        <div className="text-parchment-500 italic">Night Watcher holders cannot be targeted for Break.</div>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {others.map(p => (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => handleTargetChange(p.id)}
+            className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+              target?.id === p.id
+                ? 'bg-gold-500/30 border-gold-400 text-gold-200'
+                : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
+            }`}
+          >
+            {p.name}
+          </button>
         ))}
-      </select>
+      </div>
+      {breakableWindows.length === 0 ? (
+        <div className="text-parchment-500 italic">No card-filled middle windows available.</div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {breakableWindows.map(({ w, i }) => (
+            <button
+              key={w.id}
+              type="button"
+              onClick={() => setWinIdx(i)}
+              className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${
+                winIdx === i
+                  ? 'bg-red-900/40 border-red-400 text-red-200'
+                  : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-red-500/50'
+              }`}
+            >
+              <img src={w.card!.imageFile} alt={w.card!.name} className="w-16 h-24 rounded object-cover border border-parchment-700/30" />
+              <span className="text-[10px] font-semibold">Win {i + 1}</span>
+              <span className="text-[9px] max-w-[70px] truncate">{w.card!.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <button
         type="button"
-        onClick={() => { shadySaboteur(player.id, targetId, winIdx); onDone() }}
-        disabled={!win?.card || win.status === 'shuttered'}
+        onClick={() => { if (target) { shadySaboteur(player.id, target.id, winIdx); onDone() } }}
+        disabled={!target || !win?.card || win.status !== 'normal' || breakableWindows.length === 0}
         className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
       >
         Break window, gain ${coinGain}
@@ -1840,14 +1872,23 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
   const [targetId, setTargetId] = useState(players.filter(p => p.id !== activePlayerId)[0]?.id ?? '')
   const [breakWinIdx, setBreakWinIdx] = useState(() => {
     const first = players.filter(p => p.id !== activePlayerId)[0]
-    return first?.windows.findIndex(w => w.status !== 'shuttered') ?? 0
+    return first?.windows.findIndex((w, i) => i > 0 && i < 4 && w.status === 'normal') ?? 1
   })
   const [fenceCardId, setFenceCardId] = useState('')
 
   if (!player) return null
 
   const otherPlayers = players.filter(p => p.id !== player.id)
-  const targetPlayer = players.find(p => p.id === targetId)
+  const breakTargetPlayers = otherPlayers.filter(p => !p.hasNightWatcher)
+  const targetOptions = stealBreakMode === 'break' ? breakTargetPlayers : otherPlayers
+  const targetPlayer = targetOptions.find(p => p.id === targetId) ?? targetOptions[0]
+  const breakableWindows = targetPlayer?.windows
+    .map((w, i) => ({ w, i }))
+    .filter(({ w, i }) => i > 0 && i < 4 && w.status === 'normal') ?? []
+
+  function firstBreakWindowIdx(target?: Player) {
+    return target?.windows.findIndex((w, i) => i > 0 && i < 4 && w.status === 'normal') ?? 1
+  }
 
   const stolenHoardCards = player.hoard.filter(c => player.stolenHoardCardIds.includes(c.id))
   const stolenWindowCards = player.windows.filter(w => w.stolen && w.card).map(w => w.card!)
@@ -1874,8 +1915,9 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
             type="button"
             onClick={() => {
               setStealBreakMode('break')
-              const t = players.find(p => p.id === targetId)
-              setBreakWinIdx(t?.windows.findIndex(w => w.status !== 'shuttered') ?? 0)
+              const t = breakTargetPlayers.find(p => p.id === targetId) ?? breakTargetPlayers[0]
+              if (t) setTargetId(t.id)
+              setBreakWinIdx(firstBreakWindowIdx(t))
             }}
             className={`text-xs px-2 py-0.5 rounded border transition-colors ${
               stealBreakMode === 'break'
@@ -1889,7 +1931,7 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
 
         <div className="space-y-1">
           <div className="flex flex-wrap gap-1">
-            {otherPlayers.map(p => {
+            {targetOptions.map(p => {
               const emptyHoard = stealBreakMode === 'steal' && p.hoard.length === 0
               return (
                 <button
@@ -1898,8 +1940,7 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
                   onClick={() => {
                     if (emptyHoard) return
                     setTargetId(p.id)
-                    const t = players.find(q => q.id === p.id)
-                    setBreakWinIdx(t?.windows.findIndex(w => w.status !== 'shuttered') ?? 0)
+                    setBreakWinIdx(firstBreakWindowIdx(p))
                   }}
                   className={`text-xs px-2 py-0.5 rounded border transition-colors ${
                     emptyHoard
@@ -1914,30 +1955,37 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
               )
             })}
           </div>
+          {stealBreakMode === 'break' && otherPlayers.some(p => p.hasNightWatcher) && (
+            <div className="text-[10px] text-parchment-500 italic">Night Watcher holders cannot be targeted for Break.</div>
+          )}
 
           {stealBreakMode === 'break' && targetPlayer && (
             <>
-              {targetPlayer.windows.every(w => w.status === 'shuttered') ? (
-                <div className="text-xs text-parchment-500 italic">All breakable windows are shuttered</div>
+              {breakableWindows.length === 0 ? (
+                <div className="text-xs text-parchment-500 italic">No breakable middle windows available</div>
               ) : (
-                <div className="flex flex-wrap gap-1">
-                  {targetPlayer.windows.map((w, i) => {
-                    if (w.status === 'shuttered') return null
-                    return (
-                      <button
-                        key={w.id}
-                        type="button"
-                        onClick={() => setBreakWinIdx(i)}
-                        className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
-                          breakWinIdx === i
-                            ? 'bg-red-600/30 border-red-400 text-red-200'
-                            : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                        }`}
-                      >
-                        Win {i + 1}{w.card ? ` · ${w.card.name}` : ''}{w.status !== 'normal' ? ` [${w.status}]` : ''}
-                      </button>
-                    )
-                  })}
+                <div className="flex flex-wrap gap-2">
+                  {breakableWindows.map(({ w, i }) => (
+                    <button
+                      key={w.id}
+                      type="button"
+                      onClick={() => setBreakWinIdx(i)}
+                      className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${
+                        breakWinIdx === i
+                          ? 'bg-red-900/40 border-red-400 text-red-200'
+                          : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-red-500/50'
+                      }`}
+                    >
+                      <div className="w-16 h-24 rounded overflow-hidden border border-parchment-700/30 bg-ink-900/60 flex items-center justify-center">
+                        {w.card
+                          ? <img src={w.card.imageFile} alt={w.card.name} className="w-full h-full object-cover" />
+                          : <span className="text-[9px] text-parchment-600">Empty</span>
+                        }
+                      </div>
+                      <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                      {w.card && <span className="text-[9px] max-w-[70px] truncate">{w.card.name}</span>}
+                    </button>
+                  ))}
                 </div>
               )}
             </>
@@ -1949,18 +1997,18 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
           <button
             type="button"
             onClick={() => {
-              if (!targetId) return
+              if (!targetPlayer) return
               if (stealBreakMode === 'steal') {
-                steal(player.id, targetId)
+                steal(player.id, targetPlayer.id)
               } else {
-                breakWindow(player.id, targetId, breakWinIdx)
+                breakWindow(player.id, targetPlayer.id, breakWinIdx)
               }
               onAction()
             }}
             disabled={
-              !targetId ||
+              !targetPlayer ||
               (stealBreakMode === 'steal' && (targetPlayer?.hoard.length ?? 0) === 0) ||
-              (stealBreakMode === 'break' && !!targetPlayer?.windows.every(w => w.status === 'shuttered'))
+              (stealBreakMode === 'break' && breakableWindows.length === 0)
             }
             className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
           >
