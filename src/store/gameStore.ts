@@ -1742,7 +1742,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!card || isCounterfeitCard(card)) return
 
     const roll = forcedRoll ?? Math.ceil(Math.random() * 6)
-    const repGain = roll >= 5 ? 1 : 0
+    const printedRepGain = card.repTokens > 0 ? card.repTokens : 0
+    const bonusRepGain = roll >= 5 ? 1 : 0
+    const repGain = printedRepGain + bonusRepGain
 
     set(s => ({
       resourceDiscard: [card, ...s.resourceDiscard],
@@ -1759,7 +1761,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       }),
       actionLog: [logEntry(
-        `${rogue.name}'s Guild Contacts auctioned ${card.name} for ${card.value} coins — rolled ${roll}${repGain > 0 ? `, gained 1 ${card.type} Rep.` : '.'}`,
+        `${rogue.name}'s Guild Contacts auctioned ${card.name} for ${card.value} coins — rolled ${roll}` +
+        (printedRepGain > 0 ? `, gained ${printedRepGain} ${card.type} Rep` : '') +
+        (bonusRepGain > 0 ? `${printedRepGain > 0 ? ' plus' : ', gained'} 1 bonus ${card.type} Rep` : '') + '.',
         rogueId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -1817,7 +1821,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           players: s.players.map(p => p.id === rogueId ? { ...p, activeTokens: Math.min(2, p.activeTokens + effect.amount) } : p),
           actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — refreshed ${effect.amount} active token${effect.amount !== 1 ? 's' : ''}.`, rogueId), ...s.actionLog.slice(0, 49)],
         }))
-      } else if (effect.kind === 'steal') {
+      } else if (effect.kind === 'steal' || effect.kind === 'trade' || effect.kind === 'auction' || effect.kind === 'break') {
         set(s => ({
           rogueCounterfeitEffectPending: {
             rogueId,
@@ -1826,7 +1830,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             effect,
             source,
           },
-          actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — Steal ${effect.amount} is ready to resolve.`, rogueId), ...s.actionLog.slice(0, 49)],
+          actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — ${effect.kind} ${effect.amount} is ready to resolve.`, rogueId), ...s.actionLog.slice(0, 49)],
         }))
       } else {
         set(s => ({

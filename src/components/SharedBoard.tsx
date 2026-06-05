@@ -151,6 +151,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     rangerVisitorTradePending, dismissRangerVisitorTrade, resolveRangerVisitorTrade,
     nightWatcherChoicePending, assignNightWatcher,
     fleaMarket, buyFromFleaMarket, refillFleaMarket,
+    auction, tradeWithFleaMarket, breakWindow,
     resourceDeck, resourceDiscard, drawResource,
     workOrderDeck,
     townCrierPeek, completeTownCrier, activeVisitors, visitorDemandRemaining,
@@ -879,6 +880,26 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                 clearRogueCounterfeitEffect()
               }}
               onSkip={clearRogueCounterfeitEffect}
+            />
+          : (
+            <WaitingOverlay
+              name={players.find(p => p.id === rogueCounterfeitEffectPending.rogueId)?.name}
+              action={`resolving ${rogueCounterfeitEffectPending.cardName}`}
+              classId={players.find(p => p.id === rogueCounterfeitEffectPending.rogueId)?.classId}
+            />
+          )
+      )}
+
+      {rogueCounterfeitEffectPending && rogueCounterfeitEffectPending.effect.kind !== 'steal' && (
+        isMe(rogueCounterfeitEffectPending.rogueId)
+          ? <RogueCounterfeitActionModal
+              pending={rogueCounterfeitEffectPending}
+              players={players}
+              fleaMarket={fleaMarket}
+              onAuction={(cardId, fromZone, windowIdx) => auction(rogueCounterfeitEffectPending.rogueId, cardId, fromZone, windowIdx)}
+              onTrade={(cardIds, fleaSlotIdxs) => tradeWithFleaMarket(rogueCounterfeitEffectPending.rogueId, cardIds, fleaSlotIdxs)}
+              onBreak={(targetId, windowIdx) => breakWindow(rogueCounterfeitEffectPending.rogueId, targetId, windowIdx)}
+              onDone={clearRogueCounterfeitEffect}
             />
           : (
             <WaitingOverlay
@@ -3821,6 +3842,215 @@ function RogueCounterfeitStealModal({
               if (mode === 'heist' && canHeist && selectedCounterfeit) onHeist(target.id, windowIdx, selectedCounterfeit.id)
             }}
             disabled={!canSteal && !canHeist}
+            className="btn-primary flex-1 text-sm py-2 disabled:opacity-50"
+          >
+            Resolve
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RogueCounterfeitActionModal({
+  pending,
+  players,
+  fleaMarket,
+  onAuction,
+  onTrade,
+  onBreak,
+  onDone,
+}: {
+  pending: NonNullable<GameState['rogueCounterfeitEffectPending']>
+  players: Player[]
+  fleaMarket: (ResourceCard | null)[]
+  onAuction: (cardId: string, fromZone: 'hoard' | 'window', windowIdx?: number) => void
+  onTrade: (cardIds: string[], fleaSlotIdxs: number[]) => void
+  onBreak: (targetId: string, windowIdx: number) => void
+  onDone: () => void
+}) {
+  const rogue = players.find(p => p.id === pending.rogueId)
+  const [auctionZone, setAuctionZone] = useState<'hoard' | 'window'>('hoard')
+  const [auctionCardId, setAuctionCardId] = useState('')
+  const [auctionWindowIdx, setAuctionWindowIdx] = useState(0)
+  const [pendingAuctionRoll, setPendingAuctionRoll] = useState<number | null>(null)
+  const [tradeCardIds, setTradeCardIds] = useState<string[]>([])
+  const [tradeFleaIdxs, setTradeFleaIdxs] = useState<number[]>([])
+  const [breakTargetId, setBreakTargetId] = useState('')
+  const [breakWindowIdx, setBreakWindowIdx] = useState(1)
+
+  if (!rogue) return null
+
+  const normalHoard = rogue.hoard.filter(c => !('counterfeit' in c))
+  const normalWindows = rogue.windows
+    .map((w, i) => ({ w, i }))
+    .filter(({ w }) => w.card && w.status !== 'broken' && !('counterfeit' in w.card))
+  const tradeCards = [
+    ...rogue.hoard,
+    ...rogue.windows.flatMap(w => w.card && w.status !== 'broken' ? [w.card] : []),
+  ]
+  const fleaOptions = fleaMarket.map((c, i) => ({ c, i })).filter(({ c }) => c !== null)
+  const breakTargets = players
+    .filter(p => p.id !== rogue.id && !p.hasNightWatcher)
+    .flatMap(p => p.windows.map((w, i) => ({ player: p, w, i })))
+    .filter(({ w, i }) => i > 0 && i < 4 && w.status === 'normal')
+
+  function toggleTradeCard(cardId: string) {
+    setTradeCardIds(prev =>
+      prev.includes(cardId)
+        ? prev.filter(id => id !== cardId)
+        : prev.length < pending.effect.amount ? [...prev, cardId] : prev
+    )
+  }
+
+  function toggleFleaSlot(slotIdx: number) {
+    setTradeFleaIdxs(prev =>
+      prev.includes(slotIdx)
+        ? prev.filter(i => i !== slotIdx)
+        : prev.length < pending.effect.amount ? [...prev, slotIdx] : prev
+    )
+  }
+
+  function resolveAuction() {
+    const cardId = auctionZone === 'hoard' ? auctionCardId : (rogue.windows[auctionWindowIdx]?.card?.id ?? '')
+    if (!cardId) return
+    onAuction(cardId, auctionZone, auctionZone === 'window' ? auctionWindowIdx : undefined)
+    const store = useGameStore.getState()
+    if (store.trickShotPending || store.rn04RerollPending) {
+      onDone()
+      return
+    }
+    if (store.diceResult !== null) {
+      setPendingAuctionRoll(store.diceResult)
+      return
+    }
+    onDone()
+  }
+
+  function resolveTrade() {
+    if (tradeCardIds.length === 0 || tradeCardIds.length !== tradeFleaIdxs.length) return
+    onTrade(tradeCardIds, tradeFleaIdxs)
+    onDone()
+  }
+
+  function resolveBreak() {
+    if (!breakTargetId) return
+    onBreak(breakTargetId, breakWindowIdx)
+    onDone()
+  }
+
+  if (pendingAuctionRoll !== null) {
+    return (
+      <DiceRollModal
+        result={pendingAuctionRoll}
+        title="Counterfeit Auction"
+        subtitle={pending.cardName}
+        onDismiss={() => {
+          setPendingAuctionRoll(null)
+          onDone()
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-[370] flex items-center justify-center bg-black/70 px-4">
+      <div className="bg-ink-900 border-2 border-slate-400/70 rounded-xl p-5 shadow-2xl max-w-lg w-full text-center space-y-3">
+        <div className="flex items-center justify-center gap-3">
+          <img src={pending.cardImageFile} alt={pending.cardName} className="w-16 h-24 rounded object-cover border border-slate-400/60 shadow-lg" />
+          <div className="text-left">
+            <div className="text-lg font-display font-bold text-slate-200">{pending.cardName}</div>
+            <div className="text-xs uppercase tracking-widest text-slate-400">Counterfeit returned</div>
+            <div className="text-sm text-parchment-300 mt-1">Resolve {pending.effect.kind} {pending.effect.amount}</div>
+          </div>
+        </div>
+
+        {pending.effect.kind === 'auction' && (
+          <div className="space-y-2">
+            <div className="flex justify-center gap-2">
+              {(['hoard', 'window'] as const).map(zone => (
+                <button key={zone} type="button" onClick={() => setAuctionZone(zone)} className={`text-xs px-2 py-1 rounded border capitalize ${auctionZone === zone ? 'bg-slate-700/70 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                  {zone}
+                </button>
+              ))}
+            </div>
+            {auctionZone === 'hoard' ? (
+              <div className="flex flex-wrap gap-1.5 justify-center">
+                {normalHoard.map(c => (
+                  <ResourceCardMini key={c.id} card={c} size="lg" selected={auctionCardId === c.id} onClick={() => setAuctionCardId(c.id)} />
+                ))}
+                {normalHoard.length === 0 && <div className="text-xs text-red-400 font-semibold">No non-Counterfeit hoard cards.</div>}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2 justify-center">
+                {normalWindows.map(({ w, i }) => (
+                  <button key={w.id} type="button" onClick={() => setAuctionWindowIdx(i)} className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 ${auctionWindowIdx === i ? 'bg-slate-700/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}>
+                    <img src={w.card!.imageFile} alt={w.card!.name} className="w-16 h-24 rounded object-cover border border-parchment-700/30" />
+                    <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                  </button>
+                ))}
+                {normalWindows.length === 0 && <div className="text-xs text-red-400 font-semibold">No non-Counterfeit window cards.</div>}
+              </div>
+            )}
+          </div>
+        )}
+
+        {pending.effect.kind === 'trade' && (
+          <div className="space-y-2">
+            <div className="text-xs text-parchment-500 text-left">Your cards:</div>
+            <div className="flex flex-wrap gap-1.5 justify-center">
+              {tradeCards.map(c => (
+                <ResourceCardMini key={c.id} card={c} size="lg" selected={tradeCardIds.includes(c.id)} onClick={() => toggleTradeCard(c.id)} />
+              ))}
+            </div>
+            <div className="text-xs text-parchment-500 text-left">Flea Market:</div>
+            <div className="flex flex-wrap gap-1.5 justify-center">
+              {fleaOptions.map(({ c, i }) => c && (
+                <ResourceCardMini key={`${c.id}-${i}`} card={c} size="lg" selected={tradeFleaIdxs.includes(i)} onClick={() => toggleFleaSlot(i)} />
+              ))}
+            </div>
+            <div className="text-[10px] text-parchment-500">Pick matching counts, up to {pending.effect.amount}.</div>
+          </div>
+        )}
+
+        {pending.effect.kind === 'break' && (
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2 justify-center">
+              {breakTargets.map(({ player, w, i }) => (
+                <button
+                  key={`${player.id}-${i}`}
+                  type="button"
+                  onClick={() => {
+                    setBreakTargetId(player.id)
+                    setBreakWindowIdx(i)
+                  }}
+                  className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 ${breakTargetId === player.id && breakWindowIdx === i ? 'bg-slate-700/60 border-slate-300 text-slate-100' : 'bg-ink-700 border-parchment-700/30 text-parchment-400'}`}
+                >
+                  <div className="text-[10px] font-semibold">{player.name} W{i + 1}</div>
+                  {w.card ? <img src={w.card.imageFile} alt={w.card.name} className="w-16 h-24 rounded object-cover border border-parchment-700/30" /> : <div className="w-16 h-24 rounded border border-parchment-700/30 bg-ink-950/60" />}
+                </button>
+              ))}
+              {breakTargets.length === 0 && <div className="text-xs text-red-400 font-semibold">No break targets available.</div>}
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={onDone} className="btn-secondary flex-1 text-sm py-2">
+            Skip
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (pending.effect.kind === 'auction') resolveAuction()
+              if (pending.effect.kind === 'trade') resolveTrade()
+              if (pending.effect.kind === 'break') resolveBreak()
+            }}
+            disabled={
+              (pending.effect.kind === 'auction' && (auctionZone === 'hoard' ? !auctionCardId : !rogue.windows[auctionWindowIdx]?.card)) ||
+              (pending.effect.kind === 'trade' && (tradeCardIds.length === 0 || tradeCardIds.length !== tradeFleaIdxs.length)) ||
+              (pending.effect.kind === 'break' && !breakTargetId)
+            }
             className="btn-primary flex-1 text-sm py-2 disabled:opacity-50"
           >
             Resolve
