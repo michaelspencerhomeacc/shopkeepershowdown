@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useGameStore } from '../store/gameStore'
 import { PlayerArea } from '../components/PlayerArea'
 import { SharedBoard } from '../components/SharedBoard'
-import { SharedDecks } from '../components/SharedDecks'
 import { ActionLog } from '../components/ActionLog'
 import { OpponentSidebar } from '../components/OpponentSidebar'
 import { CLASSES } from '../data/classes'
@@ -241,12 +240,11 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
       <SharedBoard canAct={isMyTurn} localPlayerName={localPlayerName} />
 
       {/* Lower section */}
-      <div className="flex gap-2 items-start">
+      <div className="flex gap-2 items-stretch">
         {/* Left column: shared decks + action log */}
-        <div className="space-y-3 flex-shrink-0" style={{ width: 320 }}>
-          <SharedDecks />
-          <div className="h-52">
-            <ActionLog />
+        <div className="flex flex-col gap-3 flex-shrink-0" style={{ width: 320 }}>
+          <div className="flex-1 min-h-52">
+            <ActionLog players={players} localPlayerName={localPlayerName} />
           </div>
         </div>
 

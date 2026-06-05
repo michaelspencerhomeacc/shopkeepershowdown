@@ -129,6 +129,27 @@ function drawCards(
   return { drawn, deck: d, discard: disc }
 }
 
+function fillFleaMarketSlots(
+  fleaMarket: (ResourceCard | null)[],
+  resourceDeck: ResourceCard[],
+  resourceDiscard: ResourceCard[],
+): { fleaMarket: (ResourceCard | null)[]; resourceDeck: ResourceCard[]; resourceDiscard: ResourceCard[] } {
+  let deck = [...resourceDeck]
+  let discard = [...resourceDiscard]
+  const flea = fleaMarket.map(slot => {
+    if (slot !== null) return slot
+    if (deck.length === 0 && discard.length > 0) {
+      deck = shuffle(discard)
+      discard = []
+    }
+    const [card, ...rest] = deck
+    if (!card) return null
+    deck = rest
+    return card
+  })
+  return { fleaMarket: flea, resourceDeck: deck, resourceDiscard: discard }
+}
+
 function buildInitialGameState(players: Player[]): GameState {
   const resourceDeck = shuffle(RESOURCE_CARDS)
   const visitorDeck = shuffle(VISITOR_CARDS)
@@ -852,12 +873,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
           stolenHoardCardIds: displacedCounterfeitCard ? newStolenIds.filter(id => id !== displacedCounterfeitCard.id) : newStolenIds,
         }
       }),
-      actionLog: [logEntry(
-        existingCard
-          ? `${player.name} swapped ${card.name} into window ${windowIdx + 1} (${existingCard.name} returned to hoard).`
-          : `${player.name} placed ${card.name} in window ${windowIdx + 1}.`,
-        playerId,
-      ), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -895,12 +910,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
         return p
       }),
-      actionLog: [logEntry(
-        movingCounterfeit
-          ? `${player.name} moved ${card.name} out of a window — it returned to the Rogue's hand.`
-          : `${player.name} moved ${card.name} to hoard.`,
-        playerId
-      ), ...s.actionLog.slice(0, 49)],
+      actionLog: movingCounterfeit
+        ? [logEntry(`${player.name} moved ${card.name} out of a window — it returned to the Rogue's hand.`, playerId), ...s.actionLog.slice(0, 49)]
+        : s.actionLog,
     }))
   },
 
@@ -970,20 +982,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   refillFleaMarket() {
     const { resourceDeck, resourceDiscard, fleaMarket } = get()
-    let deck = resourceDeck
-    let discard = resourceDiscard
-    if (deck.length < 5 && discard.length > 0) {
-      deck = shuffle([...deck, ...discard])
-      discard = []
-    }
-    const newFlea = fleaMarket.map(slot => {
-      if (slot !== null) return slot
-      const [card, ...rest] = deck
-      if (!card) return null
-      deck = rest
-      return card
-    })
-    set({ fleaMarket: newFlea, resourceDeck: deck, resourceDiscard: discard })
+    set(fillFleaMarketSlots(fleaMarket, resourceDeck, resourceDiscard))
   },
 
   resetFleaMarket() {
@@ -1090,9 +1089,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       pawns: location
         ? [...s.pawns.filter(pw => pw.playerId !== playerId), { playerId, location }]
         : s.pawns.filter(pw => pw.playerId !== playerId),
-      actionLog: location
-        ? [logEntry(`${player.name} moved to ${location}.`, playerId), ...s.actionLog.slice(0, 49)]
-        : s.actionLog,
+      actionLog: s.actionLog,
     }))
   },
 
@@ -1502,7 +1499,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   tradeWithFleaMarket(playerId, playerCardIds, fleaSlotIndices) {
-    const { players, fleaMarket } = get()
+    const { players, fleaMarket, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
     if (playerCardIds.length !== fleaSlotIndices.length) return
@@ -1523,14 +1520,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ...s.players.find(p => p.id === playerId)!.hoard.filter(c => !cardIdSet.has(c.id)),
         ...marketCards,
       ]
-      const newFlea = s.fleaMarket.map((c, i) => {
+      const tradedFlea = s.fleaMarket.map((c, i) => {
         const idx = fleaSlotIndices.indexOf(i)
         if (idx === -1) return c
         const tradedCard = playerCards[idx]
         return tradedCard && !isCounterfeitCard(tradedCard) ? tradedCard : null
       })
+      const filledFlea = fillFleaMarketSlots(tradedFlea, resourceDeck, resourceDiscard)
       return {
-        fleaMarket: newFlea,
+        fleaMarket: filledFlea.fleaMarket,
+        resourceDeck: filledFlea.resourceDeck,
+        resourceDiscard: filledFlea.resourceDiscard,
         players: s.players.map(p =>
           p.id === playerId
             ? {
@@ -1592,7 +1592,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         return { ...p, hasNightWatcher: false }
       }),
       actionLog: [logEntry(
-        `${attacker.name} stole ${stolenCard.name} from ${target.name}!` +
+        `Steal | Stealing: ${attacker.name} | Stolen from: ${target.name} | Card: ${stolenCard.name}.` +
         (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : '') +
         (rn09Bonus > 0 ? ` ${target.name}'s Shadow of Vel'sha — gained 2 coins.` : ''),
         byPlayerId
@@ -1639,7 +1639,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         return { ...p, hasNightWatcher: false }
       }),
       actionLog: [logEntry(
-        `${rogue.name} Heisted ${stolenCard.name} from ${target.name}'s window ${windowIdx + 1}, replacing it with ${counterfeit.name}.` +
+        `Heist | Stealing: ${rogue.name} | Stolen from: ${target.name} | Taken: ${stolenCard.name} | Given: ${counterfeit.name} | Window: ${windowIdx + 1}.` +
         (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : '') +
         (rn09Bonus > 0 ? ` ${target.name}'s Shadow of Vel'sha — gained 2 coins.` : ''),
         byPlayerId
@@ -1699,8 +1699,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }),
       actionLog: [logEntry(
         ownWindow
-          ? `${rogue.name} used From the Shadows — placed ${counterfeit.name} in their own window and drew ${draw?.drawn.length ?? 0}.`
-          : `${rogue.name} used From the Shadows — planted ${counterfeit.name} in ${target.name}'s window ${windowIdx + 1}${replaced ? ` and took ${replaced.name}.` : '.'}`,
+          ? `Active | Player: ${rogue.name} | Ability: From the Shadows | Target: ${rogue.name} | Placed: ${counterfeit.name} | Window: ${windowIdx + 1} | Drew: ${draw?.drawn.length ?? 0}.`
+          : `Active | Player: ${rogue.name} | Ability: From the Shadows | Target: ${target.name} | Placed: ${counterfeit.name} | Window: ${windowIdx + 1}${replaced ? ` | Took: ${replaced.name}` : ''}.`,
         rogueId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -1742,7 +1742,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!card || isCounterfeitCard(card)) return
 
     const roll = forcedRoll ?? Math.ceil(Math.random() * 6)
-    const repGain = roll >= 5 ? 1 : 0
+    const printedRepGain = card.repTokens > 0 ? card.repTokens : 0
+    const bonusRepGain = roll >= 5 ? 1 : 0
+    const repGain = printedRepGain + bonusRepGain
 
     set(s => ({
       resourceDiscard: [card, ...s.resourceDiscard],
@@ -1751,7 +1753,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         return {
           ...p,
           activeTokens: p.activeTokens - 1,
-          coins: p.coins + card.value,
+          coins: p.coins + roll,
           rep: repGain > 0 ? { ...p.rep, [card.type]: p.rep[card.type] + repGain } : p.rep,
           hoard: p.hoard.filter(c => c.id !== card.id),
           stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== card.id),
@@ -1759,7 +1761,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         }
       }),
       actionLog: [logEntry(
-        `${rogue.name}'s Guild Contacts auctioned ${card.name} for ${card.value} coins — rolled ${roll}${repGain > 0 ? `, gained 1 ${card.type} Rep.` : '.'}`,
+        `${rogue.name}'s Guild Contacts auctioned ${card.name} — rolled ${roll}, gained ${roll} coins` +
+        (printedRepGain > 0 ? `, gained ${printedRepGain} ${card.type} Rep` : '') +
+        (bonusRepGain > 0 ? `${printedRepGain > 0 ? ' plus' : ', gained'} 1 bonus ${card.type} Rep` : '') + '.',
         rogueId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -1817,7 +1821,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           players: s.players.map(p => p.id === rogueId ? { ...p, activeTokens: Math.min(2, p.activeTokens + effect.amount) } : p),
           actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — refreshed ${effect.amount} active token${effect.amount !== 1 ? 's' : ''}.`, rogueId), ...s.actionLog.slice(0, 49)],
         }))
-      } else if (effect.kind === 'steal') {
+      } else if (effect.kind === 'steal' || effect.kind === 'trade' || effect.kind === 'auction' || effect.kind === 'break') {
         set(s => ({
           rogueCounterfeitEffectPending: {
             rogueId,
@@ -1826,7 +1830,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             effect,
             source,
           },
-          actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — Steal ${effect.amount} is ready to resolve.`, rogueId), ...s.actionLog.slice(0, 49)],
+          actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — ${effect.kind} ${effect.amount} is ready to resolve.`, rogueId), ...s.actionLog.slice(0, 49)],
         }))
       } else {
         set(s => ({
@@ -1867,7 +1871,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
           ? { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' } : w), hasNightWatcher: players.length > 2 }
           : { ...p, hasNightWatcher: false }
       ),
-      actionLog: [logEntry(`${attacker.name} broke ${target.name}'s window ${windowIdx + 1}!${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(
+        `Break | Breaking: ${attacker.name} | Broken: ${target.name} | Card: ${win.card?.name ?? 'Empty window'} | Window: ${windowIdx + 1}.` +
+        (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''),
+        byPlayerId
+      ), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -2358,7 +2366,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (p.id === targetPlayerId) return { ...p, windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'broken' as WindowStatus } : w), hasNightWatcher: players.length > 2 }
         return { ...p, hasNightWatcher: false }
       }),
-      actionLog: [logEntry(`${attacker.name} used Shady Saboteur on ${target.name}'s window ${windowIdx + 1} (${cardName}) — broke it, gained ${coinGain} coins.${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(
+        `Professional | Player: ${attacker.name} | Professional: Shady Saboteur | Target: ${target.name} | Break | Card: ${cardName} | Window: ${windowIdx + 1} | Gained: ${coinGain} coins.` +
+        (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''),
+        byPlayerId
+      ), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -2430,7 +2442,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (p.id === fromPlayerId) return { ...p, coins: Math.max(0, p.coins - 2) }
         return p
       }),
-      actionLog: [logEntry(`${attacker.name} used Brazen Bounty Hunter — ${target.name} paid ${amount} coins.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`Professional | Player: ${attacker.name} | Professional: Brazen Bounty Hunter | Target: ${target.name} | Took: ${amount} coins.`, byPlayerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -2447,7 +2459,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         if (p.id === fromPlayerId) return { ...p, hoard: p.hoard.filter(c => c.id !== cardId), stolenHoardCardIds: p.stolenHoardCardIds.filter(id => id !== cardId) }
         return p
       }),
-      actionLog: [logEntry(`${attacker.name} used Brazen Bounty Hunter — took ${card.name} from ${target.name}'s hoard.`, byPlayerId), ...s.actionLog.slice(0, 49)],
+      actionLog: [logEntry(`Professional | Player: ${attacker.name} | Professional: Brazen Bounty Hunter | Target: ${target.name} | Took: ${card.name}.`, byPlayerId), ...s.actionLog.slice(0, 49)],
     }))
   },
 
@@ -2859,6 +2871,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const myRep = attacker.rep.ARM + attacker.rep.CON + attacker.rep.TRI + attacker.rep.TRG
     const theirRep = target.rep.ARM + target.rep.CON + target.rep.TRI + target.rep.TRG
     const breakTwo = theirRep > myRep
+    const breakDetails = toBreak
+      .map(i => `Window ${i + 1}: ${target.windows[i]?.card?.name ?? 'Empty window'}`)
+      .join('; ')
 
     set(s => ({
       players: s.players.map(p => {
@@ -2870,7 +2885,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
         ? s.classAbilitiesUsedThisTurn
         : [...s.classAbilitiesUsedThisTurn, 'recklessSwing'],
       actionLog: [logEntry(
-        `${attacker.name} used Reckless Swing — broke ${toBreak.length} window${toBreak.length > 1 ? 's' : ''} of ${target.name}${breakTwo ? ' (they had more Rep!)' : ''}${players.length > 2 ? `. ${target.name} now holds the Night Watcher.` : '.'}`,
+        `Active | Player: ${attacker.name} | Ability: Reckless Swing | Break | Breaking: ${attacker.name} | Broken: ${target.name} | Affected: ${breakDetails}.` +
+        (breakTwo ? ' Target had more Rep.' : '') +
+        (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''),
         byPlayerId
       ), ...s.actionLog.slice(0, 49)],
     }))
@@ -2933,14 +2950,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       case 2: { // Trade 5
         if (!payload?.tradeData) return
         const { playerCardIds, fleaSlotIndices } = payload.tradeData
-        const { fleaMarket } = get()
+        const { fleaMarket, resourceDeck, resourceDiscard } = get()
         const playerCards = player.hoard.filter(c => playerCardIds.includes(c.id))
         const fleaCards = fleaSlotIndices.map(i => fleaMarket[i]).filter(Boolean) as ResourceCard[]
         if (playerCards.length === 0) return
-        const newFlea = [...fleaMarket]
-        fleaSlotIndices.forEach((slotIdx, i) => { newFlea[slotIdx] = playerCards[i] ?? null })
+        const counterfeitCards = playerCards.filter(isCounterfeitCard)
+        const tradedFlea = [...fleaMarket]
+        fleaSlotIndices.forEach((slotIdx, i) => {
+          const tradedCard = playerCards[i]
+          tradedFlea[slotIdx] = tradedCard && !isCounterfeitCard(tradedCard) ? tradedCard : null
+        })
+        const filledFlea = fillFleaMarketSlots(tradedFlea, resourceDeck, resourceDiscard)
         set(s => ({
-          fleaMarket: newFlea,
+          fleaMarket: filledFlea.fleaMarket,
+          resourceDeck: filledFlea.resourceDeck,
+          resourceDiscard: filledFlea.resourceDiscard,
           players: markUsed(s.players).map(p => {
             if (p.id !== playerId) return p
             const newHoard = p.hoard.filter(c => !playerCardIds.includes(c.id))
@@ -2948,6 +2972,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }),
           actionLog: [logEntry(`${player.name} used Elemental Die (2) — Traded ${playerCards.length} resource(s) with the Flea Market.`, playerId), ...s.actionLog.slice(0, 49)],
         }))
+        if (counterfeitCards.length > 0) {
+          get().returnCounterfeitsToRogue(counterfeitCards, playerId, 'traded to the Flea Market')
+        }
         break
       }
       case 3: { // Repair 2
@@ -3392,6 +3419,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     // Confirming a Tales of Old spend costs 1 active token and permanently removes the card.
     const newRenown = player.renownCards.filter(c => c.id !== cardId)
+    let counterfeitReturns: CounterfeitCard[] = []
     let logMsg = `${player.name} spent ${card.name} (Tales of Old) — `
 
     set(s => {
@@ -3417,16 +3445,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
               return found
             }).filter(Boolean) as ResourceCard[]
             if (fleaCards.length === playerCards.length && fleaCards.length > 0) {
+              counterfeitReturns = playerCards.filter(isCounterfeitCard)
               updatedPlayers = updatedPlayers.map(p => {
                 if (p.id !== playerId) return p
                 const hoard = p.hoard.filter(c => !pIds.includes(c.id))
                 return { ...p, hoard: [...hoard, ...fleaCards] }
               })
               const newFlea = [...s.fleaMarket]
-              fIdxs.forEach((i, j) => { newFlea[i] = playerCards[j] })
+              fIdxs.forEach((i, j) => {
+                const tradedCard = playerCards[j]
+                newFlea[i] = tradedCard && !isCounterfeitCard(tradedCard) ? tradedCard : null
+              })
+              const filledFlea = fillFleaMarketSlots(newFlea, newDeck, newDiscard)
+              newDeck = filledFlea.resourceDeck
+              newDiscard = filledFlea.resourceDiscard
               return {
                 players: updatedPlayers,
-                fleaMarket: newFlea,
+                fleaMarket: filledFlea.fleaMarket,
                 resourceDeck: newDeck,
                 resourceDiscard: newDiscard,
                 actionLog: [logEntry(`${player.name} spent Council of Seven — traded ${fleaCards.length} resource(s) with Flea Market.`, playerId), ...s.actionLog.slice(0, 49)],
@@ -3584,6 +3619,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // rn07: trigger Town Crier peek after state is committed
     if (cardId === 'rn07') {
       get().peekTownCrier(playerId)
+    }
+    if (counterfeitReturns.length > 0) {
+      get().returnCounterfeitsToRogue(counterfeitReturns, playerId, 'traded to the Flea Market')
     }
   },
 
@@ -3947,7 +3985,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
               : p
           ),
           actionLog: [logEntry(
-            `${ranger.name}'s Ambush at ${card.location} could not break ${target.name}${target.hasNightWatcher ? ' because the Night Watcher protected them.' : ' because no middle windows were breakable.'}`,
+            `Active | Player: ${ranger.name} | Ability: Ambush | Target: ${target.name} | Break failed${target.hasNightWatcher ? ' | Blocked by: Night Watcher.' : ' | Reason: no middle windows were breakable.'}`,
             rangerId
           ), ...s.actionLog.slice(0, 49)],
         }))
@@ -3973,7 +4011,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           return { ...p, hasNightWatcher: false }
         }),
         actionLog: [logEntry(
-          `${ranger.name}'s Ambush sprung at ${card.location}! Broke ${target.name}'s window${breakableIdx >= 0 ? ` #${breakableIdx + 1}${players.length > 2 ? ` — ${target.name} now holds the Night Watcher.` : '.'}` : ' (none available).'}`,
+          `Active | Player: ${ranger.name} | Ability: Ambush | Break | Breaking: ${ranger.name} | Broken: ${target.name} | Card: ${target.windows[breakableIdx]?.card?.name ?? 'Empty window'} | Window: ${breakableIdx + 1}.` +
+          (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''),
           rangerId
         ), ...s.actionLog.slice(0, 49)],
       }))
@@ -3991,7 +4030,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             acknowledgedBy: [],
           },
           players: s.players.map(p => p.id === rangerId ? { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id) } : p),
-          actionLog: [logEntry(`${ranger.name}'s Ambush at ${card.location} — ${target.name} has no hoard cards to steal!`, rangerId), ...s.actionLog.slice(0, 49)],
+          actionLog: [logEntry(`Active | Player: ${ranger.name} | Ability: Ambush | Target: ${target.name} | Steal failed | Reason: no hoard cards.`, rangerId), ...s.actionLog.slice(0, 49)],
         }))
         return
       }
@@ -4020,7 +4059,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           return { ...p, hasNightWatcher: false }
         }),
         actionLog: [logEntry(
-          `${ranger.name}'s Ambush sprung at ${card.location}! Stole ${stolenCard.name} from ${target.name}.${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}${rn09Bonus > 0 ? ` (${target.name}'s Shadow of Vel'sha — gained 2 coins.)` : ''}`,
+          `Active | Player: ${ranger.name} | Ability: Ambush | Steal | Stealing: ${ranger.name} | Stolen from: ${target.name} | Card: ${stolenCard.name}.` +
+          (players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : '') +
+          (rn09Bonus > 0 ? ` ${target.name}'s Shadow of Vel'sha — gained 2 coins.` : ''),
           rangerId
         ), ...s.actionLog.slice(0, 49)],
       }))
@@ -4153,7 +4194,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
           }
           return { ...p, hasNightWatcher: false }
         }),
-        actionLog: [logEntry(`${ranger.name}'s Trick Shot bonus — Broke ${owner.name}'s window #${winIdx + 1}.${players.length > 2 ? ` ${owner.name} now holds the Night Watcher.` : ''}`, rangerId), ...s.actionLog.slice(0, 49)],
+        actionLog: [logEntry(
+          `Active | Player: ${ranger.name} | Ability: Trick Shot bonus | Break | Breaking: ${ranger.name} | Broken: ${owner.name} | Card: ${owner.windows[winIdx]?.card?.name ?? 'Empty window'} | Window: ${winIdx + 1}.` +
+          (players.length > 2 ? ` ${owner.name} now holds the Night Watcher.` : ''),
+          rangerId
+        ), ...s.actionLog.slice(0, 49)],
       }))
     }
   },
@@ -4163,7 +4208,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   resolveRangerVisitorTrade(playerCardId, fleaSlotIdx) {
-    const { rangerVisitorTradePending, players, fleaMarket } = get()
+    const { rangerVisitorTradePending, players, fleaMarket, resourceDeck, resourceDiscard } = get()
     if (!rangerVisitorTradePending) return
     const { rangerId, tradesRemaining } = rangerVisitorTradePending
     const ranger = players.find(p => p.id === rangerId)
@@ -4176,10 +4221,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const nextPending = tradesRemaining > 1
       ? { rangerId, tradesRemaining: tradesRemaining - 1 }
       : null
+    const playerCardIsCounterfeit = isCounterfeitCard(playerCard)
+    const filledFlea = fillFleaMarketSlots(
+      fleaMarket.map((c, i) => i === fleaSlotIdx ? playerCardIsCounterfeit ? null : playerCard : c),
+      resourceDeck,
+      resourceDiscard,
+    )
 
     set(s => ({
       rangerVisitorTradePending: nextPending,
-      fleaMarket: s.fleaMarket.map((c, i) => i === fleaSlotIdx ? playerCard : c),
+      fleaMarket: filledFlea.fleaMarket,
+      resourceDeck: filledFlea.resourceDeck,
+      resourceDiscard: filledFlea.resourceDiscard,
       players: s.players.map(p => {
         if (p.id !== rangerId) return p
         const newHoard = p.hoard.filter(c => c.id !== playerCardId)
@@ -4187,5 +4240,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }),
       actionLog: [logEntry(`${ranger.name}'s Visitor Trade — swapped ${playerCard.name} for ${fleaCard?.name ?? 'nothing'} from Flea Market.`, rangerId), ...s.actionLog.slice(0, 49)],
     }))
+    if (playerCardIsCounterfeit) {
+      get().returnCounterfeitsToRogue([playerCard], rangerId, 'traded to the Flea Market')
+    }
   },
 }))

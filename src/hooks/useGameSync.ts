@@ -57,6 +57,17 @@ export function useGameSync(roomId: string | null, userId: string | null) {
     // sync" — only the latter should set pendingLocalPushRef.
     let isApplyingBase = false
 
+    function draftProgress(state: any): number {
+      const draft = state?.startingDraft
+      if (!draft) return Number.POSITIVE_INFINITY
+      return typeof draft.pickIndex === 'number' ? draft.pickIndex : -1
+    }
+
+    function incomingAdvancesDraft(incoming: any, local: any): boolean {
+      if (!local?.startingDraft) return false
+      return draftProgress(incoming) > draftProgress(local)
+    }
+
     function applyRemoteState(incoming: object) {
       isSyncingRef.current = true
       pendingLocalPushRef.current = false
@@ -161,9 +172,11 @@ export function useGameSync(roomId: string | null, userId: string | null) {
       if (!payload?.state) return
       const incomingLog = (payload.state as any).actionLog
       const incomingTopTime: number | undefined = Array.isArray(incomingLog) ? incomingLog[0]?.timestamp : undefined
-      const localTopTime: number | undefined = useGameStore.getState().actionLog[0]?.timestamp
+      const localState = useGameStore.getState()
+      const localTopTime: number | undefined = localState.actionLog[0]?.timestamp
+      const draftAdvanced = incomingAdvancesDraft(payload.state, localState)
       // Strictly older → stale reorder; drop it
-      if (incomingTopTime && localTopTime && incomingTopTime < localTopTime) return
+      if (!draftAdvanced && incomingTopTime && localTopTime && incomingTopTime < localTopTime) return
       applyRemoteState(payload.state)
     })
 
@@ -181,17 +194,19 @@ export function useGameSync(roomId: string | null, userId: string | null) {
         if (!row?.state) return
         const incomingLog = (row.state as any).actionLog
         const incomingTopId: string | undefined = Array.isArray(incomingLog) ? incomingLog[0]?.id : undefined
-        const localTopId: string | undefined = useGameStore.getState().actionLog[0]?.id
+        const localState = useGameStore.getState()
+        const localTopId: string | undefined = localState.actionLog[0]?.id
+        const draftAdvanced = incomingAdvancesDraft(row.state, localState)
         // If the newest log entry is already present locally, this is either our own
         // write reflected back or a duplicate of a broadcast already processed — skip.
-        if (incomingTopId && incomingTopId === localTopId) return
+        if (!draftAdvanced && incomingTopId && incomingTopId === localTopId) return
         // Also drop if the incoming snapshot is strictly older than what we already
         // have (e.g. another client pushed their state to DB after our own local action
         // but before our push arrived — their write fires postgres_changes here and
         // would snap back our local change without this guard).
         const incomingTopTime: number | undefined = Array.isArray(incomingLog) ? incomingLog[0]?.timestamp : undefined
-        const localTopTime: number | undefined = useGameStore.getState().actionLog[0]?.timestamp
-        if (incomingTopTime && localTopTime && incomingTopTime < localTopTime) return
+        const localTopTime: number | undefined = localState.actionLog[0]?.timestamp
+        if (!draftAdvanced && incomingTopTime && localTopTime && incomingTopTime < localTopTime) return
         applyRemoteState(row.state)
       },
     )
@@ -235,13 +250,15 @@ export function useGameSync(roomId: string | null, userId: string | null) {
       if (!data?.state) return
       const incomingLog = (data.state as any).actionLog
       const incomingTopId: string | undefined = incomingLog?.[0]?.id
-      const localTopId: string | undefined = useGameStore.getState().actionLog[0]?.id
-      if (incomingTopId && incomingTopId === localTopId) return // already in sync
+      const localState = useGameStore.getState()
+      const localTopId: string | undefined = localState.actionLog[0]?.id
+      const draftAdvanced = incomingAdvancesDraft(data.state, localState)
+      if (!draftAdvanced && incomingTopId && incomingTopId === localTopId) return // already in sync
       // Drop if DB snapshot is older than local state (another client wrote stale data
       // between our action and our own push arriving at the DB).
       const incomingTopTime: number | undefined = Array.isArray(incomingLog) ? incomingLog[0]?.timestamp : undefined
-      const localTopTime: number | undefined = useGameStore.getState().actionLog[0]?.timestamp
-      if (incomingTopTime && localTopTime && incomingTopTime < localTopTime) return
+      const localTopTime: number | undefined = localState.actionLog[0]?.timestamp
+      if (!draftAdvanced && incomingTopTime && localTopTime && incomingTopTime < localTopTime) return
       applyRemoteState(data.state)
     }, 4000)
 
