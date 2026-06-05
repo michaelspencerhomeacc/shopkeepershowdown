@@ -259,6 +259,15 @@ export interface GameState {
     location: Location
     card: AmbushCard
   } | null
+  /** Ranger: Ambush has resolved; involved players must acknowledge before it clears */
+  ambushResult: {
+    rangerId: string
+    targetPlayerId: string
+    location: Location
+    effect: AmbushCard['effect']
+    outcome: string
+    acknowledgedBy: string[]
+  } | null
   /** Ranger: Trick Shot fired — waiting on Ranger decision to force a re-roll */
   trickShotPending: {
     rangerId: string

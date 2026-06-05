@@ -53,6 +53,21 @@ interface ActionOption {
   description: string
 }
 
+function getActionDisplay(action: ActionOption, player?: Player): ActionOption {
+  if (action.id !== 'craft') return action
+  return player?.workOrder
+    ? {
+        ...action,
+        label: 'Complete a Work Order',
+        description: 'Spend matching resources to complete your Work Order and earn coins.',
+      }
+    : {
+        ...action,
+        label: 'Draw 2 Work Orders and Pick One',
+        description: 'Draw 2 Work Orders and pick one to keep.',
+      }
+}
+
 export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
   guildhall: [
     { id: 'hire',      label: 'Hire a Professional', icon: '🏛️', description: 'Use a Guild professional for a special ability.' },
@@ -88,26 +103,31 @@ export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
 
 /** Step 1: grid of clickable action options */
 function ActionPickerView({ location, onPick }: { location: Location; onPick: (id: string) => void }) {
+  const { activePlayerId, players } = useGameStore()
+  const player = players.find(p => p.id === activePlayerId) ?? players[0]
   const actions = LOCATION_ACTIONS[location]
   return (
     <div className="space-y-2">
-      {actions.map(action => (
-        <button
-          key={action.id}
-          type="button"
-          onClick={() => onPick(action.id)}
-          className="w-full text-left bg-ink-800/50 hover:bg-ink-700/60 border border-parchment-800/30 hover:border-gold-500/50 rounded-lg px-4 py-3 transition-all group"
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-xl w-7 text-center flex-shrink-0">{action.icon}</span>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold text-parchment-100 group-hover:text-gold-300 leading-tight">{action.label}</div>
-              <div className="text-xs text-parchment-500 mt-0.5 leading-tight">{action.description}</div>
+      {actions.map(action => {
+        const displayAction = getActionDisplay(action, player)
+        return (
+          <button
+            key={action.id}
+            type="button"
+            onClick={() => onPick(action.id)}
+            className="w-full text-left bg-ink-800/50 hover:bg-ink-700/60 border border-parchment-800/30 hover:border-gold-500/50 rounded-lg px-4 py-3 transition-all group"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl w-7 text-center flex-shrink-0">{displayAction.icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-parchment-100 group-hover:text-gold-300 leading-tight">{displayAction.label}</div>
+                <div className="text-xs text-parchment-500 mt-0.5 leading-tight">{displayAction.description}</div>
+              </div>
+              <span className="text-parchment-600 group-hover:text-gold-400 flex-shrink-0">→</span>
             </div>
-            <span className="text-parchment-600 group-hover:text-gold-400 flex-shrink-0">→</span>
-          </div>
-        </button>
-      ))}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -161,10 +181,15 @@ function ConfirmActionBlock({
 }
 
 export function LocationActionPanel({ location, onClose, onAction, onConsumeAction, initialAction }: Props) {
+  const { activePlayerId, players } = useGameStore()
   const [selectedAction, setSelectedAction] = useState<string | null>(initialAction ?? null)
+  const player = players.find(p => p.id === activePlayerId) ?? players[0]
 
   const actionLabel = selectedAction
-    ? LOCATION_ACTIONS[location].find(a => a.id === selectedAction)?.label ?? ''
+    ? getActionDisplay(
+        LOCATION_ACTIONS[location].find(a => a.id === selectedAction) ?? { id: selectedAction, label: '', icon: '', description: '' },
+        player,
+      ).label
     : ''
 
   return (
@@ -1745,7 +1770,7 @@ function WorkshopActions({ actionId, onAction, onBack }: { actionId: string; onA
       <div className="space-y-3">
         <BackButton onBack={onBack} />
         <p className="text-sm text-parchment-300 leading-relaxed">
-          Draw 2 Work Orders and keep one. The unchosen card returns to the deck.
+          Draw 2 Work Orders and pick one. The unchosen card returns to the deck.
         </p>
         <button
           type="button"
@@ -1753,7 +1778,7 @@ function WorkshopActions({ actionId, onAction, onBack }: { actionId: string; onA
           disabled={false}
           className="btn-primary text-xs px-4 py-1.5"
         >
-          Draw Work Orders →
+          Draw 2 Work Orders and Pick One →
         </button>
       </div>
     )
@@ -1855,7 +1880,7 @@ function CraftCardPicker({ player, onDone, onBack }: { player: Player; onDone: (
           disabled={!canCraft}
           className="btn-primary text-xs px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Craft →
+          Complete Work Order →
         </button>
       </div>
     </div>

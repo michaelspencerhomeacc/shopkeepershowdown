@@ -28,13 +28,13 @@ const TYPE_ICON: Record<string, string> = { ARM: '⚔️', CON: '🧪', TRI: '�
 
 const CLASS_THEME: Record<string, { panel: string; border: string; text: string; glow: string }> = {
   barbarian: { panel: 'bg-red-950/95', border: 'border-red-400', text: 'text-red-200', glow: 'shadow-red-900/70' },
-  monk:      { panel: 'bg-amber-950/95', border: 'border-amber-400', text: 'text-amber-200', glow: 'shadow-amber-900/70' },
-  paladin:   { panel: 'bg-blue-950/95', border: 'border-blue-400', text: 'text-blue-200', glow: 'shadow-blue-900/70' },
+  monk:      { panel: 'bg-yellow-950/95', border: 'border-yellow-400', text: 'text-yellow-200', glow: 'shadow-yellow-900/70' },
+  paladin:   { panel: 'bg-pink-950/95', border: 'border-pink-400', text: 'text-pink-200', glow: 'shadow-pink-900/70' },
   ranger:    { panel: 'bg-green-950/95', border: 'border-green-400', text: 'text-green-200', glow: 'shadow-green-900/70' },
-  rogue:     { panel: 'bg-purple-950/95', border: 'border-purple-400', text: 'text-purple-200', glow: 'shadow-purple-900/70' },
-  shaman:    { panel: 'bg-teal-950/95', border: 'border-teal-400', text: 'text-teal-200', glow: 'shadow-teal-900/70' },
-  sorcerer:  { panel: 'bg-violet-950/95', border: 'border-violet-400', text: 'text-violet-200', glow: 'shadow-violet-900/70' },
-  warlock:   { panel: 'bg-indigo-950/95', border: 'border-indigo-400', text: 'text-indigo-200', glow: 'shadow-indigo-900/70' },
+  rogue:     { panel: 'bg-slate-950/95', border: 'border-slate-400', text: 'text-slate-200', glow: 'shadow-slate-900/70' },
+  shaman:    { panel: 'bg-blue-950/95', border: 'border-blue-400', text: 'text-blue-200', glow: 'shadow-blue-900/70' },
+  sorcerer:  { panel: 'bg-orange-950/95', border: 'border-orange-400', text: 'text-orange-200', glow: 'shadow-orange-900/70' },
+  warlock:   { panel: 'bg-purple-950/95', border: 'border-purple-400', text: 'text-purple-200', glow: 'shadow-purple-900/70' },
 }
 
 const DEFAULT_CLASS_THEME = { panel: 'bg-ink-950/95', border: 'border-gold-400', text: 'text-gold-200', glow: 'shadow-black/70' }
@@ -143,7 +143,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     adjustCoins, discardResource, placeInWindow,
     resetGame, addLog,
     rn04RerollPending, resolveRn04Reroll, rn04ForcedRoll, dismissRn04ForcedRoll,
-    ambushPending, springAmbush, passAmbush,
+    ambushPending, ambushResult, springAmbush, passAmbush, acknowledgeAmbush,
     trickShotPending, useTrickShot, passTrickShot, trickShotForcedRoll, dismissTrickShotForcedRoll,
     trickShotBonusPending, resolveTrickShotBonus,
     rangerVisitorTradePending, dismissRangerVisitorTrade, resolveRangerVisitorTrade,
@@ -1360,6 +1360,15 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       })()}
 
       {/* Night Watcher choice — attacker picks which victim receives the token */}
+      {ambushResult && (
+        <AmbushResultOverlay
+          result={ambushResult}
+          players={players}
+          localPlayerId={localPlayerId}
+          onAcknowledge={acknowledgeAmbush}
+        />
+      )}
+
       {nightWatcherChoicePending && (() => {
         const candidates = nightWatcherChoicePending.candidateIds
           .map(id => players.find(p => p.id === id))
@@ -1850,6 +1859,87 @@ const CLASH_ANIM_STYLE = (
 
 const FACES_CLASH = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅']
 
+function AmbushResultOverlay({
+  result,
+  players,
+  localPlayerId,
+  onAcknowledge,
+}: {
+  result: NonNullable<GameState['ambushResult']>
+  players: Player[]
+  localPlayerId: string | null
+  onAcknowledge: (playerId: string | null) => void
+}) {
+  const ranger = players.find(p => p.id === result.rangerId)
+  const target = players.find(p => p.id === result.targetPlayerId)
+  const participantIds = [result.rangerId, result.targetPlayerId]
+  const isParticipant = localPlayerId !== null && participantIds.includes(localPlayerId)
+  const hasAcknowledged = localPlayerId !== null && result.acknowledgedBy.includes(localPlayerId)
+  const allDone = participantIds.every(id => result.acknowledgedBy.includes(id))
+  const effectLabel = result.effect === 'break' ? 'BREAK' : 'STEAL'
+
+  return (
+    <div className="fixed inset-0 z-[342] flex items-center justify-center bg-black/60">
+      <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-md w-full mx-4 text-center space-y-3">
+        <div className="flex items-center justify-center gap-4 mb-2">
+          <div className="flex flex-col items-center gap-1">
+            <img src={markerSrc(ranger?.classId ?? '')} alt={ranger?.name} className="w-14 h-14 rounded-full border-2 border-amber-400/70 object-cover shadow-lg" />
+            <span className="text-xs text-amber-300 font-semibold">{ranger?.name}</span>
+          </div>
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="text-2xl">🏹</span>
+            <span className={`text-xs font-bold px-2 py-0.5 rounded ${result.effect === 'break' ? 'bg-red-900/60 text-red-300' : 'bg-amber-900/60 text-amber-300'}`}>
+              {effectLabel}
+            </span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <img src={markerSrc(target?.classId ?? '')} alt={target?.name} className="w-14 h-14 rounded-full border-2 border-red-400/50 object-cover shadow-lg opacity-90" />
+            <span className="text-xs text-parchment-300 font-semibold">{target?.name}</span>
+          </div>
+        </div>
+
+        <div className="text-lg font-display font-bold text-amber-300">Ambush Resolved</div>
+        <div className="text-xs text-parchment-500">
+          at <span className="text-parchment-300 font-semibold">{LOCATIONS.find(l => l.id === result.location)?.label}</span>
+        </div>
+        <div className="text-sm text-parchment-300 leading-relaxed">{result.outcome}</div>
+
+        {localPlayerId === null ? (
+          <button onClick={() => onAcknowledge(null)} className="btn-primary w-full text-sm py-2 font-semibold">
+            Continue →
+          </button>
+        ) : allDone ? (
+          <div className="text-center text-sm text-parchment-400 italic">Resolving...</div>
+        ) : !isParticipant ? (
+          <div className="text-center text-sm text-parchment-500 italic">Waiting for involved players...</div>
+        ) : hasAcknowledged ? (
+          <div className="text-center text-sm text-parchment-500 italic">Waiting for the other player...</div>
+        ) : (
+          <button onClick={() => onAcknowledge(localPlayerId)} className="btn-primary w-full text-sm py-2 font-semibold">
+            Continue →
+          </button>
+        )}
+
+        {localPlayerId !== null && (
+          <div className="flex justify-center gap-2 flex-wrap">
+            {participantIds.map(id => {
+              const p = players.find(pl => pl.id === id)
+              const done = result.acknowledgedBy.includes(id)
+              return (
+                <div key={id} className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+                  done ? 'border-green-500/60 text-green-400 bg-green-900/20' : 'border-parchment-700/40 text-parchment-500'
+                }`}>
+                  {done ? '✓' : '⏳'} {p?.name.split(' ')[0]}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ClashRollOffOverlay({
   result,
   players,
@@ -1869,6 +1959,8 @@ function ClashRollOffOverlay({
   )
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const finishedRef = useRef(false)
+  const participantIds = result.rolls.map(r => r.playerId)
+  const isParticipant = localPlayerId !== null && participantIds.includes(localPlayerId)
 
   useEffect(() => {
     let frame = 0
@@ -1995,6 +2087,24 @@ function ClashRollOffOverlay({
             ) : result.rolls.every(r => result.acknowledgedBy.includes(r.playerId)) ? (
               /* All acknowledged — should auto-dismiss, but keep a fallback */
               <div className="text-center text-sm text-parchment-400 italic">Resolving…</div>
+            ) : !isParticipant ? (
+              /* Spectators can see the result, but only involved players can clear it */
+              <div className="space-y-2">
+                <div className="text-center text-sm text-parchment-500 italic">Waiting for involved players...</div>
+                <div className="flex justify-center gap-2 flex-wrap">
+                  {result.rolls.map(r => {
+                    const p = players.find(pl => pl.id === r.playerId)
+                    const done = result.acknowledgedBy.includes(r.playerId)
+                    return (
+                      <div key={r.playerId} className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+                        done ? 'border-green-500/60 text-green-400 bg-green-900/20' : 'border-parchment-700/40 text-parchment-500'
+                      }`}>
+                        {done ? 'âœ“' : 'â³'} {p?.name.split(' ')[0]}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             ) : result.acknowledgedBy.includes(localPlayerId) ? (
               /* Local player has acknowledged, waiting for others */
               <div className="space-y-2">

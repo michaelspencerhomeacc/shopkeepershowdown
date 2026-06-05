@@ -1445,7 +1445,7 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                       {/* rn10: inline duel setup — target + stake pickers */}
                       {card.id === 'rn10' && (
                         <div className="space-y-1.5">
-                          <div className="text-xs text-parchment-400 italic">Spend to immediately issue a Righteous Duel (no Active token needed).</div>
+                          <div className="text-xs text-parchment-400 italic">Spend to immediately issue a Righteous Duel (the Renown spend costs 1 Active; the Duel itself costs no extra token).</div>
                           {challengeableTargets.length === 0 ? (
                             <div className="text-xs text-red-400 italic">No valid targets — all opponents lack a stake.</div>
                           ) : (
@@ -1519,9 +1519,13 @@ function PaladinAbilities({ player, isActiveTurn }: { player: Player; isActiveTu
                         </div>
                       )}
                       <div className="text-xs text-amber-400 font-semibold">⚠ Card permanently removed after spending.</div>
+                      {player.activeTokens < 1 && (
+                        <div className="text-xs text-red-400 font-semibold">Need 1 active token to confirm this spend.</div>
+                      )}
                       <button
                         onClick={() => handleTalesConfirm(card.id)}
                         disabled={
+                          player.activeTokens < 1 ||
                           (card.id === 'rn01' && (rn01HoardIds.length === 0 || rn01HoardIds.length !== rn01FleaIdxs.length)) ||
                           (card.id === 'rn06' && rn06Cards.length < 2) ||
                           (card.id === 'rn08' && player.hoard.length === 0) ||

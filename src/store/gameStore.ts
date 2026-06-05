@@ -178,6 +178,7 @@ function buildInitialGameState(players: Player[]): GameState {
     endgame: null,
     rn04RerollPending: null,
     ambushPending: null,
+    ambushResult: null,
     trickShotPending: null,
     trickShotBonusPending: null,
     rangerVisitorTradePending: null,
@@ -334,6 +335,8 @@ interface GameStore extends GameState {
   springAmbush: (windowIdx?: number) => void
   /** Ranger passes on the Ambush trigger (card stays placed) */
   passAmbush: () => void
+  /** Acknowledge a resolved Ambush popup; clears once both involved players have acknowledged. */
+  acknowledgeAmbush: (playerId: string | null) => void
   /** Ranger uses their Trick Shot on the pending roll */
   useTrickShot: () => void
   /** Ranger passes on the Trick Shot opportunity */
@@ -396,6 +399,7 @@ const INITIAL: GameState = {
   endgame: null,
   rn04RerollPending: null,
   ambushPending: null,
+  ambushResult: null,
   trickShotPending: null,
   trickShotBonusPending: null,
   rangerVisitorTradePending: null,
@@ -3047,16 +3051,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { players, resourceDeck, resourceDiscard } = get()
     const player = players.find(p => p.id === playerId)
     if (!player || player.classId !== 'paladin') return
+    if (player.activeTokens < 1) return
     const card = player.renownCards.find(c => c.id === cardId)
     if (!card) return
 
-    // Remove card from hand
+    // Confirming a Tales of Old spend costs 1 active token and permanently removes the card.
     const newRenown = player.renownCards.filter(c => c.id !== cardId)
     let logMsg = `${player.name} spent ${card.name} (Tales of Old) — `
 
     set(s => {
       let updatedPlayers = s.players.map(p =>
-        p.id === playerId ? { ...p, renownCards: newRenown } : p
+        p.id === playerId ? { ...p, activeTokens: p.activeTokens - 1, renownCards: newRenown } : p
       )
       let newDeck = s.resourceDeck
       let newDiscard = s.resourceDiscard
@@ -3562,6 +3567,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (breakableIdx < 0) {
         set(s => ({
           ambushPending: null,
+          ambushResult: {
+            rangerId,
+            targetPlayerId,
+            location: card.location,
+            effect: card.effect,
+            outcome: `Ambush could not break ${target.name}${target.hasNightWatcher ? ' because the Night Watcher protected them.' : ' because no middle windows were breakable.'}`,
+            acknowledgedBy: [],
+          },
           players: s.players.map(p =>
             p.id === rangerId
               ? { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id) }
@@ -3576,6 +3589,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }
       set(s => ({
         ambushPending: null,
+        ambushResult: {
+          rangerId,
+          targetPlayerId,
+          location: card.location,
+          effect: card.effect,
+          outcome: `Broke ${target.name}'s window #${breakableIdx + 1}${players.length > 2 ? ` and gave ${target.name} the Night Watcher.` : '.'}`,
+          acknowledgedBy: [],
+        },
         players: s.players.map(p => {
           if (p.id === rangerId) return { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id), hasNightWatcher: false }
           if (p.id === targetPlayerId) return {
@@ -3595,6 +3616,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (target.hoard.length === 0) {
         set(s => ({
           ambushPending: null,
+          ambushResult: {
+            rangerId,
+            targetPlayerId,
+            location: card.location,
+            effect: card.effect,
+            outcome: `${target.name} had no hoard cards to steal.`,
+            acknowledgedBy: [],
+          },
           players: s.players.map(p => p.id === rangerId ? { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id) } : p),
           actionLog: [logEntry(`${ranger.name}'s Ambush at ${card.location} — ${target.name} has no hoard cards to steal!`, rangerId), ...s.actionLog.slice(0, 49)],
         }))
@@ -3606,6 +3635,14 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const rn09Bonus = target.classId === 'paladin' && target.renownCards.some(c => c.id === 'rn09') ? 2 : 0
       set(s => ({
         ambushPending: null,
+        ambushResult: {
+          rangerId,
+          targetPlayerId,
+          location: card.location,
+          effect: card.effect,
+          outcome: `Stole ${stolenCard.name} from ${target.name}.${players.length > 2 ? ` ${target.name} now holds the Night Watcher.` : ''}${rn09Bonus > 0 ? ` ${target.name}'s Shadow of Vel'sha gained 2 coins.` : ''}`,
+          acknowledgedBy: [],
+        },
         players: s.players.map(p => {
           if (p.id === rangerId) return { ...p, hoard: [...p.hoard, stolenCard], stolenHoardCardIds: [...p.stolenHoardCardIds, stolenCard.id], ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id), hasNightWatcher: false }
           if (p.id === targetPlayerId) return {
@@ -3626,7 +3663,37 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   passAmbush() {
-    set({ ambushPending: null })
+    const { ambushPending, players } = get()
+    if (!ambushPending) return
+    const ranger = players.find(p => p.id === ambushPending.rangerId)
+    set({
+      ambushPending: null,
+      ambushResult: {
+        rangerId: ambushPending.rangerId,
+        targetPlayerId: ambushPending.targetPlayerId,
+        location: ambushPending.location,
+        effect: ambushPending.card.effect,
+        outcome: `${ranger?.name ?? 'The Ranger'} let the Ambush pass.`,
+        acknowledgedBy: [],
+      },
+    })
+  },
+
+  acknowledgeAmbush(playerId) {
+    const ar = get().ambushResult
+    if (!ar) return
+    if (playerId === null) {
+      set({ ambushResult: null })
+      return
+    }
+    const participantIds = [ar.rangerId, ar.targetPlayerId]
+    if (!participantIds.includes(playerId) || ar.acknowledgedBy.includes(playerId)) return
+    const newAcknowledgedBy = [...ar.acknowledgedBy, playerId]
+    if (participantIds.every(id => newAcknowledgedBy.includes(id))) {
+      set({ ambushResult: null })
+    } else {
+      set({ ambushResult: { ...ar, acknowledgedBy: newAcknowledgedBy } })
+    }
   },
 
   useTrickShot() {
