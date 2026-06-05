@@ -725,12 +725,31 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                     </div>
                   </div>
 
+                  {/* Placed pawns — shown directly under the location title */}
+                  {pawnsHere.length > 0 && (
+                    <div className="absolute top-10 left-1/2 -translate-x-1/2 z-10 flex justify-center gap-1.5 pointer-events-none">
+                      {pawnsHere.map(pw => {
+                        const player = players.find(p => p.id === pw.playerId)
+                        if (!player) return null
+                        return (
+                          <div
+                            key={pw.playerId}
+                            className="w-9 h-9 rounded-full overflow-hidden border-2 border-white/90 shadow-xl shadow-black/70 ring-2 ring-gold-400/70"
+                            title={`${player.name} is here`}
+                          >
+                            <img src={markerSrc(player.classId)} alt={player.name} className="w-full h-full object-cover" />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
                   {/* Thieves' Guild — last fenced type badge */}
                   {loc.id === 'thieves-guild' && lastGuildFenceType && (
-                    <div className="absolute top-7 right-1.5 z-10 pointer-events-none">
-                      <div className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold border shadow ${TYPE_CHIP[lastGuildFenceType]}`}>
-                        <span>{TYPE_ICON[lastGuildFenceType]}</span>
-                        <span>{lastGuildFenceType}</span>
+                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+                      <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold border-2 shadow-lg shadow-black/60 ${TYPE_CHIP[lastGuildFenceType]}`}>
+                        <span className="text-sm leading-none">{TYPE_ICON[lastGuildFenceType]}</span>
+                        <span className="uppercase tracking-wide">Fence {lastGuildFenceType}</span>
                       </div>
                     </div>
                   )}
@@ -748,22 +767,6 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                     </div>
                   )}
 
-                  {/* Placed pawns — stacked bottom-right, larger and more visible */}
-                  <div className="absolute bottom-2 right-1.5 flex flex-col gap-1 items-end">
-                    {pawnsHere.map(pw => {
-                      const player = players.find(p => p.id === pw.playerId)
-                      if (!player) return null
-                      return (
-                        <div
-                          key={pw.playerId}
-                          className="w-10 h-10 rounded-full overflow-hidden border-2 border-white/90 shadow-xl shadow-black/70 ring-2 ring-gold-400/60"
-                          title={`${player.name} is here`}
-                        >
-                          <img src={markerSrc(player.classId)} alt={player.name} className="w-full h-full object-cover" />
-                        </div>
-                      )
-                    })}
-                  </div>
                 </button>
               )
             })}
@@ -1065,12 +1068,14 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       {ambushPending && (isMe(ambushPending.rangerId) || isMe(ambushPending.targetPlayerId)) && (() => {
         const target = players.find(p => p.id === ambushPending.targetPlayerId)
         const isBreak = ambushPending.card.effect === 'break'
-        const breakableWindows = target?.windows.map((w, i) => ({ w, i })).filter(x => x.w.status === 'normal') ?? []
-        const canSpring = !isBreak || ambushBreakWinIdx !== null
+        const breakableWindows = !target?.hasNightWatcher
+          ? target?.windows.map((w, i) => ({ w, i })).filter(({ w, i }) => i > 0 && i < 4 && w.status === 'normal') ?? []
+          : []
+        const canSpring = !isBreak || ambushBreakWinIdx !== null || breakableWindows.length === 0
         const rangerName = players.find(p => p.id === ambushPending.rangerId)?.name
         return (
           <div className="fixed inset-0 z-[340] flex items-center justify-center bg-black/60">
-            <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 text-center space-y-3">
+            <div className="bg-ink-900 border-2 border-amber-500/60 rounded-xl p-5 shadow-2xl max-w-md w-full mx-4 text-center space-y-3">
               {/* Portrait pair */}
               <div className="flex items-center justify-center gap-4 mb-2">
                 <div className="flex flex-col items-center gap-1">
@@ -1103,6 +1108,9 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
 
               {isMe(ambushPending.rangerId) ? (
                 <>
+                  {isBreak && target?.hasNightWatcher && (
+                    <div className="text-sm text-parchment-500 italic">Night Watcher protects this player from Break.</div>
+                  )}
                   {isBreak && breakableWindows.length > 0 && (
                     <div className="space-y-1.5">
                       <div className="text-sm text-parchment-400">Choose which window to break:</div>
@@ -1111,13 +1119,20 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                           <button
                             key={w.id}
                             onClick={() => setAmbushBreakWinIdx(i)}
-                            className={`text-sm px-3 py-1 rounded border transition-colors ${
+                            className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${
                               ambushBreakWinIdx === i
-                                ? 'bg-red-700/50 border-red-400 text-red-200'
+                                ? 'bg-red-900/40 border-red-400 text-red-200'
                                 : 'bg-ink-700 border-parchment-700/30 text-parchment-300 hover:border-red-500/50'
                             }`}
                           >
-                            Window {i + 1}{w.card ? ` (${w.card.name})` : ' (empty)'}
+                            <div className="w-16 h-24 rounded overflow-hidden border border-parchment-700/30 bg-ink-900/60 flex items-center justify-center">
+                              {w.card
+                                ? <img src={w.card.imageFile} alt={w.card.name} className="w-full h-full object-cover" />
+                                : <span className="text-[9px] text-parchment-600">Empty</span>
+                              }
+                            </div>
+                            <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                            {w.card && <span className="text-[9px] max-w-[70px] truncate">{w.card.name}</span>}
                           </button>
                         ))}
                       </div>
@@ -1270,6 +1285,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
       {pendingRangerPassiveRoll !== null && (
         <DiceRollModal
           result={pendingRangerPassiveRoll}
+          displayResult={Math.floor(pendingRangerPassiveRoll / 2)}
           title="Master of the Wilderness"
           subtitle="Free gather from the Ranger passive"
           onDismiss={() => setPendingRangerPassiveRoll(null)}
@@ -1656,14 +1672,18 @@ function ClashRollOffOverlay({
     result.rolls.map(() => Math.ceil(Math.random() * 6))
   )
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const finishedRef = useRef(false)
 
   useEffect(() => {
     let frame = 0
     const TOTAL_FRAMES = 18
+    finishedRef.current = false
 
     function tick() {
+      if (finishedRef.current) return
       frame++
       if (frame >= TOTAL_FRAMES) {
+        finishedRef.current = true
         setDisplayed(rollValues)
         setPhase('landing')
         timerRef.current = setTimeout(() => setPhase('settled'), 400)
@@ -1683,8 +1703,16 @@ function ClashRollOffOverlay({
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  function settleNow() {
+    if (phase === 'settled') return
+    finishedRef.current = true
+    if (timerRef.current) clearTimeout(timerRef.current)
+    setDisplayed(rollValues)
+    setPhase('settled')
+  }
+
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60" onClick={settleNow}>
       {CLASH_ANIM_STYLE}
       <div className="dice-modal-in bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
         <div className="text-center mb-3">
@@ -1763,7 +1791,7 @@ function ClashRollOffOverlay({
             {localPlayerId === null ? (
               /* Pass-and-play: single dismiss button */
               <button
-                onClick={() => onAcknowledge(null)}
+                onClick={e => { e.stopPropagation(); onAcknowledge(null) }}
                 className="btn-primary w-full text-sm py-2 font-semibold"
               >
                 Continue →
@@ -1793,7 +1821,7 @@ function ClashRollOffOverlay({
               /* Local player hasn't acknowledged yet */
               <div className="space-y-2">
                 <button
-                  onClick={() => onAcknowledge(localPlayerId)}
+                  onClick={e => { e.stopPropagation(); onAcknowledge(localPlayerId) }}
                   className="btn-primary w-full text-sm py-2 font-semibold"
                 >
                   Continue →
@@ -2867,16 +2895,20 @@ function RighteousDuelModal({
     Math.ceil(Math.random() * 6),
   ])
   const duelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const duelFinishedRef = useRef(false)
 
   useEffect(() => {
     if (result.declined) return
     const rollValues: [number, number] = [result.challengerRoll, result.targetRoll]
     let frame = 0
     const TOTAL_FRAMES = 18
+    duelFinishedRef.current = false
 
     function tick() {
+      if (duelFinishedRef.current) return
       frame++
       if (frame >= TOTAL_FRAMES) {
+        duelFinishedRef.current = true
         setDuelDisplayed(rollValues)
         setDuelPhase('landing')
         duelTimerRef.current = setTimeout(() => setDuelPhase('settled'), 400)
@@ -2900,6 +2932,14 @@ function RighteousDuelModal({
   const target = players.find(p => p.id === result.targetId)
   const winner = result.winnerId ? players.find(p => p.id === result.winnerId) : null
   const isTie = result.winnerId === null
+
+  function settleDuelNow() {
+    if (result.declined || duelPhase === 'settled') return
+    duelFinishedRef.current = true
+    if (duelTimerRef.current) clearTimeout(duelTimerRef.current)
+    setDuelDisplayed([result.challengerRoll, result.targetRoll])
+    setDuelPhase('settled')
+  }
 
   // ── Declined path ───────────────────────────────────────
   if (result.declined) {
@@ -2974,7 +3014,7 @@ function RighteousDuelModal({
 
   // ── Duel resolved path ──────────────────────────────────
   return (
-    <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
+    <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60" onClick={settleDuelNow}>
       {DUEL_ANIM_STYLE}
       <div className="dice-modal-in bg-ink-900 border-2 border-gold-500/60 rounded-xl p-5 shadow-2xl max-w-sm w-full mx-4">
         <div className="text-center mb-4">
@@ -3096,7 +3136,7 @@ function RighteousDuelModal({
             )}
 
             <button
-              onClick={onDismiss}
+              onClick={e => { e.stopPropagation(); onDismiss() }}
               className="btn-primary w-full text-sm py-2 font-semibold"
             >
               Continue →
@@ -3263,9 +3303,11 @@ function TrickShotBonusModal({
   const [selectedWindowId, setSelectedWindowId] = useState('')
 
   const breakableWindows = breakTargets.flatMap(p =>
-    p.windows
-      .map((w, i) => ({ playerId: p.id, playerName: p.name, windowId: w.id, idx: i, status: w.status }))
-      .filter(w => w.status === 'normal')
+    p.hasNightWatcher
+      ? []
+      : p.windows
+        .map((w, i) => ({ playerId: p.id, playerName: p.name, windowId: w.id, idx: i, status: w.status, card: w.card }))
+        .filter(w => w.idx > 0 && w.idx < 4 && w.status === 'normal')
   )
 
   function confirm() {
@@ -3275,7 +3317,7 @@ function TrickShotBonusModal({
 
   return (
     <div className="fixed inset-0 z-[325] flex items-center justify-center bg-black/60">
-      <div className="bg-ink-900 border-2 border-green-500/60 rounded-xl p-5 shadow-2xl max-w-xs w-full mx-4 space-y-3">
+      <div className="bg-ink-900 border-2 border-green-500/60 rounded-xl p-5 shadow-2xl max-w-md w-full mx-4 space-y-3">
         <div className="text-center">
           {ranger && (
             <div className="flex justify-center mb-2">
@@ -3320,22 +3362,38 @@ function TrickShotBonusModal({
           </button>
         </div>
         {choice === 'break' && (
-          <div className="flex flex-wrap gap-1 mt-1">
-            {breakableWindows.map(w => (
-              <button
-                key={w.windowId}
-                type="button"
-                onClick={() => setSelectedWindowId(w.windowId)}
-                className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
-                  selectedWindowId === w.windowId
-                    ? 'bg-red-600/30 border-red-400 text-red-200'
-                    : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-parchment-400'
-                }`}
-              >
-                {w.playerName} · Win {w.idx + 1}
-              </button>
-            ))}
-          </div>
+          <>
+            {breakTargets.some(p => p.hasNightWatcher) && (
+              <div className="text-xs text-parchment-500 italic">Night Watcher holders cannot be targeted for Break.</div>
+            )}
+            {breakableWindows.length === 0 ? (
+              <div className="text-xs text-parchment-500 italic">No breakable middle windows available.</div>
+            ) : (
+              <div className="flex flex-wrap gap-2 mt-1 justify-center">
+                {breakableWindows.map(w => (
+                  <button
+                    key={w.windowId}
+                    type="button"
+                    onClick={() => setSelectedWindowId(w.windowId)}
+                    className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${
+                      selectedWindowId === w.windowId
+                        ? 'bg-red-900/40 border-red-400 text-red-200'
+                        : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-red-500/50'
+                    }`}
+                  >
+                    <div className="w-16 h-24 rounded overflow-hidden border border-parchment-700/30 bg-ink-900/60 flex items-center justify-center">
+                      {w.card
+                        ? <img src={w.card.imageFile} alt={w.card.name} className="w-full h-full object-cover" />
+                        : <span className="text-[9px] text-parchment-600">Empty</span>
+                      }
+                    </div>
+                    <span className="text-[10px] font-semibold">{w.playerName} · Win {w.idx + 1}</span>
+                    {w.card && <span className="text-[9px] max-w-[80px] truncate">{w.card.name}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
         <button
           onClick={confirm}

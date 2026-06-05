@@ -38,6 +38,8 @@ type Phase = 'rolling' | 'landing' | 'settled'
 interface Props {
   /** The pre-computed roll result (1–6). Animation tumbles then lands on this value. */
   result: number
+  /** Optional number shown under the die once settled, while the die face still lands on result. */
+  displayResult?: number
   /** Optional heading shown above the die (e.g. "Gathering Resources") */
   title?: string
   /** Optional line shown below the result number once settled */
@@ -61,18 +63,24 @@ interface Props {
  *     <DiceRollModal result={roll} title="Gather" onDismiss={() => setShowRoll(false)} />
  *   )}
  */
-export function DiceRollModal({ result, title, subtitle, bonus, onDismiss }: Props) {
+export function DiceRollModal({ result, displayResult, title, subtitle, bonus, onDismiss }: Props) {
   const [displayed, setDisplayed] = useState<number>(() => Math.ceil(Math.random() * 6))
   const [phase, setPhase] = useState<Phase>('rolling')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const finishedRef = useRef(false)
 
   useEffect(() => {
     let frame = 0
     const TOTAL_FRAMES = 18
+    finishedRef.current = false
+    setPhase('rolling')
+    setDisplayed(Math.ceil(Math.random() * 6))
 
     function tick() {
+      if (finishedRef.current) return
       frame++
       if (frame >= TOTAL_FRAMES) {
+        finishedRef.current = true
         setDisplayed(result)
         setPhase('landing')
         timerRef.current = setTimeout(() => setPhase('settled'), 400)
@@ -92,11 +100,23 @@ export function DiceRollModal({ result, title, subtitle, bonus, onDismiss }: Pro
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [result])
 
-  const total = bonus !== undefined ? result + bonus : result
+  function settleNow() {
+    if (phase === 'settled') return
+    finishedRef.current = true
+    if (timerRef.current) clearTimeout(timerRef.current)
+    setDisplayed(result)
+    setPhase('settled')
+  }
+
+  const resultNumber = displayResult ?? result
+  const total = bonus !== undefined ? resultNumber + bonus : resultNumber
   const showBonus = bonus !== undefined && bonus !== 0
 
   return (
-    <div className="fixed inset-0 z-[350] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[350] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={settleNow}
+    >
       {DICE_ANIM_STYLE}
 
       <div className="dice-modal-in bg-ink-900 border-2 border-gold-600/40 rounded-2xl px-10 py-8 shadow-2xl flex flex-col items-center gap-3 max-w-xs w-full mx-4">
@@ -128,7 +148,7 @@ export function DiceRollModal({ result, title, subtitle, bonus, onDismiss }: Pro
           {phase === 'settled' && (
             <div className="dice-result-in flex items-baseline justify-center gap-1.5">
               <span className="text-5xl font-display font-bold text-parchment-100 tabular-nums">
-                {result}
+                {resultNumber}
               </span>
               {showBonus && (
                 <>
@@ -152,7 +172,7 @@ export function DiceRollModal({ result, title, subtitle, bonus, onDismiss }: Pro
 
         {/* Continue button */}
         <button
-          onClick={onDismiss}
+          onClick={e => { e.stopPropagation(); onDismiss() }}
           disabled={phase !== 'settled'}
           className="btn-primary mt-1 px-10 py-2 text-sm transition-opacity disabled:opacity-0"
         >

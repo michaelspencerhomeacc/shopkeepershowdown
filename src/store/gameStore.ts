@@ -21,6 +21,10 @@ function shuffle<T>(arr: T[]): T[] {
   return a
 }
 
+function isBreakableWindowIndex(index: number) {
+  return index > 0 && index < 4
+}
+
 function makePlayer(id: string, name: string, classId: ClassId): Player {
   const windows = Array.from({ length: 5 }, (_, i) => ({
     id: `${id}-w${i}`,
@@ -1416,9 +1420,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }
 
     const win = target.windows[windowIdx]
-    if (win?.status === 'shuttered') {
+    if (!isBreakableWindowIndex(windowIdx) || win?.status !== 'normal') {
       set(s => ({
-        actionLog: [logEntry(`${attacker.name} can't break ${target.name}'s window ${windowIdx + 1} — it's shuttered!`, byPlayerId), ...s.actionLog.slice(0, 49)],
+        actionLog: [logEntry(`${attacker.name} can't break ${target.name}'s window ${windowIdx + 1} — it isn't breakable.`, byPlayerId), ...s.actionLog.slice(0, 49)],
       }))
       return
     }
@@ -1902,7 +1906,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return
     }
     const win = target.windows[windowIdx]
-    if (!win?.card) return
+    if (!isBreakableWindowIndex(windowIdx) || win?.status !== 'normal' || !win.card) return
     const coinGain = Math.floor(win.card.value / 2)
     const cardName = win.card.name
     set(s => ({
@@ -2395,8 +2399,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return
     }
 
-    // Deduplicate and only break non-shuttered windows from the provided indices
-    const toBreak = [...new Set(windowIndices)].filter(i => target.windows[i]?.status !== 'shuttered')
+    // Deduplicate and only break middle, normal windows from the provided indices
+    const toBreak = [...new Set(windowIndices)].filter(i => isBreakableWindowIndex(i) && target.windows[i]?.status === 'normal')
     if (toBreak.length === 0) return
 
     const myRep = attacker.rep.ARM + attacker.rep.CON + attacker.rep.TRI + attacker.rep.TRG
@@ -2616,13 +2620,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     if (effects.repair1 !== undefined) {
       const { windowIdx } = effects.repair1
-      updatedPlayers = updatedPlayers.map(p =>
-        p.id !== playerId ? p : {
-          ...p,
-          windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'normal' as WindowStatus } : w),
-        }
-      )
-      logs.push(`Repair window ${windowIdx + 1}`)
+      const repairTarget = player.windows[windowIdx]
+      if (repairTarget?.status !== 'broken') {
+        logs.push('Repair 1 had no broken window')
+      } else {
+        updatedPlayers = updatedPlayers.map(p =>
+          p.id !== playerId ? p : {
+            ...p,
+            windows: p.windows.map((w, i) => i === windowIdx ? { ...w, status: 'normal' as WindowStatus } : w),
+          }
+        )
+        logs.push(`Repair window ${windowIdx + 1}`)
+      }
     }
 
     if (effects.trade1) {
@@ -3433,9 +3442,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     if (card.effect === 'break') {
       // Break the chosen window (or first breakable as fallback)
-      const breakableIdx = windowIdx !== undefined && target.windows[windowIdx]?.status === 'normal'
+      const breakableIdx = !target.hasNightWatcher && windowIdx !== undefined && isBreakableWindowIndex(windowIdx) && target.windows[windowIdx]?.status === 'normal'
         ? windowIdx
-        : target.windows.findIndex(w => w.status === 'normal')
+        : target.hasNightWatcher ? -1 : target.windows.findIndex((w, i) => isBreakableWindowIndex(i) && w.status === 'normal')
+      if (breakableIdx < 0) {
+        set(s => ({
+          ambushPending: null,
+          players: s.players.map(p =>
+            p.id === rangerId
+              ? { ...p, ambushHand: [...p.ambushHand, card], ambushesPlaced: p.ambushesPlaced.filter(c => c.id !== card.id) }
+              : p
+          ),
+          actionLog: [logEntry(
+            `${ranger.name}'s Ambush at ${card.location} could not break ${target.name}${target.hasNightWatcher ? ' because the Night Watcher protected them.' : ' because no middle windows were breakable.'}`,
+            rangerId
+          ), ...s.actionLog.slice(0, 49)],
+        }))
+        return
+      }
       set(s => ({
         ambushPending: null,
         players: s.players.map(p => {
@@ -3563,6 +3587,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (ownerId === rangerId || ownerId === targetPlayerId) return
       const owner = players.find(p => p.id === ownerId)
       if (!owner) return
+      if (!isBreakableWindowIndex(winIdx) || owner.windows[winIdx]?.status !== 'normal') return
       // Night Watcher blocks the break
       if (owner.hasNightWatcher) {
         set(s => ({
