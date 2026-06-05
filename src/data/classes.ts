@@ -58,7 +58,7 @@ export const CLASSES: ClassCard[] = [
     name: 'Rogue',
     tagline: 'Your stock is my stock',
     imageFile: '/cards/player-boards/Rogue.png',
-    status: 'WIP',
+    status: 'BETA',
     passive: 'No Honour Among Thieves — When you Steal, you may instead Heist: take a resource directly from a player\'s window and replace it with a Counterfeit card. Counterfeits in your hand may be placed in your own windows and sell normally to Visitors (no Rep gained). Replenish 1 Counterfeit by visiting the Thieves\' Guild or Tavern.',
     actives: [
       'Guild Contacts — Auction 1 Stolen resource (Counterfeits excluded). If your d6 roll is 5 or higher, gain a matching Reputation token in addition to the coins.',

@@ -301,9 +301,27 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
 
 
       {/* Class-specific decks */}
-      {player.classId === 'rogue' && player.counterfeitCards.length > 0 && (
+      {player.classId === 'rogue' && (player.counterfeitHand.length > 0 || player.counterfeitCards.length > 0) && (
         <div>
-          <span className="zone-label">Counterfeit Deck ({player.counterfeitCards.length})</span>
+          <span className="zone-label">Counterfeit Hand ({player.counterfeitHand.length}) · Deck ({player.counterfeitCards.length})</span>
+          {isOwn && player.counterfeitHand.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {player.counterfeitHand.map(c => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => canMove && setPlacingCardId(c.id)}
+                  disabled={!canMove}
+                  className={`card w-[65px] h-[91px] group relative transition-all disabled:cursor-not-allowed ${
+                    placingCardId === c.id ? 'ring-2 ring-slate-300 shadow-lg shadow-slate-900/60' : canMove ? 'hover:ring-2 hover:ring-slate-400/70' : ''
+                  }`}
+                  title={canMove ? 'Place in one of your windows' : c.name}
+                >
+                  <CardImage src={c.imageFile} alt={c.name} className="w-full h-full" fallbackText={c.name} />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {player.classId === 'paladin' && player.renownCards.length > 0 && (

@@ -1890,10 +1890,13 @@ function CraftCardPicker({ player, onDone, onBack }: { player: Player; onDone: (
 // ---- Thieves' Guild ----
 
 function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string; onAction: () => void; onBack: () => void }) {
-  const { activePlayerId, players, fleaMarket, steal, breakWindow, fence, launder } = useGameStore()
+  const { activePlayerId, players, fleaMarket, steal, heist, breakWindow, fence, launder } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
 
   const [stealBreakMode, setStealBreakMode] = useState<'steal' | 'break'>('steal')
+  const [rogueHeist, setRogueHeist] = useState(false)
+  const [heistWindowIdx, setHeistWindowIdx] = useState(1)
+  const [heistCounterfeitId, setHeistCounterfeitId] = useState('')
   const [targetId, setTargetId] = useState(players.filter(p => p.id !== activePlayerId)[0]?.id ?? '')
   const [breakWinIdx, setBreakWinIdx] = useState(() => {
     const first = players.filter(p => p.id !== activePlayerId)[0]
@@ -1905,18 +1908,24 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
 
   const otherPlayers = players.filter(p => p.id !== player.id)
   const breakTargetPlayers = otherPlayers.filter(p => !p.hasNightWatcher)
-  const targetOptions = stealBreakMode === 'break' ? breakTargetPlayers : otherPlayers
+  const targetOptions = stealBreakMode === 'break' || (stealBreakMode === 'steal' && rogueHeist)
+    ? breakTargetPlayers
+    : otherPlayers
   const targetPlayer = targetOptions.find(p => p.id === targetId) ?? targetOptions[0]
   const breakableWindows = targetPlayer?.windows
     .map((w, i) => ({ w, i }))
     .filter(({ w, i }) => i > 0 && i < 4 && w.status === 'normal') ?? []
+  const heistWindows = targetPlayer?.windows
+    .map((w, i) => ({ w, i }))
+    .filter(({ w }) => w.status !== 'shuttered' && w.card) ?? []
+  const selectedHeistCounterfeit = player.counterfeitHand.find(c => c.id === heistCounterfeitId) ?? player.counterfeitHand[0]
 
   function firstBreakWindowIdx(target?: Player) {
     return target?.windows.findIndex((w, i) => i > 0 && i < 4 && w.status === 'normal') ?? 1
   }
 
-  const stolenHoardCards = player.hoard.filter(c => player.stolenHoardCardIds.includes(c.id))
-  const stolenWindowCards = player.windows.filter(w => w.stolen && w.card).map(w => w.card!)
+  const stolenHoardCards = player.hoard.filter(c => player.stolenHoardCardIds.includes(c.id) && !('counterfeit' in c))
+  const stolenWindowCards = player.windows.filter(w => w.stolen && w.card && !('counterfeit' in w.card)).map(w => w.card!)
   const allStolenCards = [...stolenHoardCards, ...stolenWindowCards]
   const topFlea = fleaMarket.find(c => c !== null)
 
@@ -1927,7 +1936,10 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
         <div className="flex gap-1 mb-2">
           <button
             type="button"
-            onClick={() => setStealBreakMode('steal')}
+            onClick={() => {
+              setStealBreakMode('steal')
+              setRogueHeist(false)
+            }}
             className={`text-xs px-2 py-0.5 rounded border transition-colors ${
               stealBreakMode === 'steal'
                 ? 'bg-gold-500/30 border-gold-400 text-gold-200'
@@ -1957,7 +1969,7 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
         <div className="space-y-1">
           <div className="flex flex-wrap gap-1">
             {targetOptions.map(p => {
-              const emptyHoard = stealBreakMode === 'steal' && p.hoard.length === 0
+              const emptyHoard = stealBreakMode === 'steal' && !rogueHeist && p.hoard.length === 0
               return (
                 <button
                   key={p.id}
@@ -1966,6 +1978,8 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
                     if (emptyHoard) return
                     setTargetId(p.id)
                     setBreakWinIdx(firstBreakWindowIdx(p))
+                    const firstHeistWindow = p.windows.findIndex(w => w.status !== 'shuttered' && w.card)
+                    if (firstHeistWindow >= 0) setHeistWindowIdx(firstHeistWindow)
                   }}
                   className={`text-xs px-2 py-0.5 rounded border transition-colors ${
                     emptyHoard
@@ -1982,6 +1996,71 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
           </div>
           {stealBreakMode === 'break' && otherPlayers.some(p => p.hasNightWatcher) && (
             <div className="text-[10px] text-parchment-500 italic">Night Watcher holders cannot be targeted for Break.</div>
+          )}
+
+          {stealBreakMode === 'steal' && player.classId === 'rogue' && (
+            <div className="space-y-2 rounded-lg border border-slate-600/40 bg-slate-950/30 p-2">
+              <label className="flex items-center gap-2 text-xs text-parchment-300 font-semibold">
+                <input
+                  type="checkbox"
+                  checked={rogueHeist}
+                  onChange={e => {
+                    setRogueHeist(e.target.checked)
+                    const t = (e.target.checked ? breakTargetPlayers : otherPlayers).find(p => p.id === targetId) ?? (e.target.checked ? breakTargetPlayers : otherPlayers)[0]
+                    if (t) {
+                      setTargetId(t.id)
+                      const firstWindow = t.windows.findIndex(w => w.status !== 'shuttered' && w.card)
+                      setHeistWindowIdx(firstWindow >= 0 ? firstWindow : 1)
+                    }
+                    setHeistCounterfeitId(player.counterfeitHand[0]?.id ?? '')
+                  }}
+                />
+                Heist instead
+              </label>
+              {rogueHeist && (
+                <>
+                  {player.counterfeitHand.length === 0 ? (
+                    <div className="text-[10px] text-red-400 italic">No Counterfeits in hand.</div>
+                  ) : heistWindows.length === 0 ? (
+                    <div className="text-[10px] text-red-400 italic">No non-shuttered window cards to Heist.</div>
+                  ) : (
+                    <>
+                      <div className="text-[10px] text-parchment-500">Window to Heist:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {heistWindows.map(({ w, i }) => (
+                          <button
+                            key={w.id}
+                            type="button"
+                            onClick={() => setHeistWindowIdx(i)}
+                            className={`flex flex-col items-center gap-1 rounded-lg border-2 p-1.5 transition-all ${
+                              heistWindowIdx === i
+                                ? 'bg-slate-700/60 border-slate-300 text-slate-100'
+                                : 'bg-ink-700 border-parchment-700/30 text-parchment-400 hover:border-slate-400/70'
+                            }`}
+                          >
+                            <img src={w.card!.imageFile} alt={w.card!.name} className="w-16 h-24 rounded object-cover border border-parchment-700/30" />
+                            <span className="text-[10px] font-semibold">Win {i + 1}</span>
+                            <span className="text-[9px] max-w-[70px] truncate">{w.card!.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="text-[10px] text-parchment-500">Counterfeit replacement:</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {player.counterfeitHand.map(c => (
+                          <ResourceCardMini
+                            key={c.id}
+                            card={c}
+                            size="lg"
+                            selected={(heistCounterfeitId || selectedHeistCounterfeit?.id) === c.id}
+                            onClick={() => setHeistCounterfeitId(c.id)}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
           )}
 
           {stealBreakMode === 'break' && targetPlayer && (
@@ -2024,7 +2103,11 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
             onClick={() => {
               if (!targetPlayer) return
               if (stealBreakMode === 'steal') {
-                steal(player.id, targetPlayer.id)
+                if (rogueHeist && player.classId === 'rogue') {
+                  heist(player.id, targetPlayer.id, heistWindowIdx, heistCounterfeitId || selectedHeistCounterfeit?.id || '')
+                } else {
+                  steal(player.id, targetPlayer.id)
+                }
               } else {
                 breakWindow(player.id, targetPlayer.id, breakWinIdx)
               }
@@ -2032,12 +2115,13 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
             }}
             disabled={
               !targetPlayer ||
-              (stealBreakMode === 'steal' && (targetPlayer?.hoard.length ?? 0) === 0) ||
+              (stealBreakMode === 'steal' && !rogueHeist && (targetPlayer?.hoard.length ?? 0) === 0) ||
+              (stealBreakMode === 'steal' && rogueHeist && (player.counterfeitHand.length === 0 || heistWindows.length === 0)) ||
               (stealBreakMode === 'break' && breakableWindows.length === 0)
             }
             className="btn-primary text-xs px-2 py-0.5 disabled:opacity-50"
           >
-            {stealBreakMode === 'steal' ? 'Steal Random Card' : `Break Window ${breakWinIdx + 1}`}
+            {stealBreakMode === 'steal' ? (rogueHeist ? `Heist Window ${heistWindowIdx + 1}` : 'Steal Random Card') : `Break Window ${breakWinIdx + 1}`}
           </button>
         </div>
       </div>

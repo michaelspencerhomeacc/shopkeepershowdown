@@ -35,10 +35,19 @@ export interface WorkOrderCard {
   imageFile: string
 }
 
-export interface CounterfeitCard {
-  id: string
-  name: string
-  imageFile: string
+export type CounterfeitReturnEffect =
+  | { kind: 'coins'; amount: number }
+  | { kind: 'draw'; amount: number }
+  | { kind: 'trade'; amount: number }
+  | { kind: 'steal'; amount: number }
+  | { kind: 'launder'; amount: number }
+  | { kind: 'auction'; amount: number }
+  | { kind: 'refresh'; amount: number }
+  | { kind: 'break'; amount: number }
+
+export interface CounterfeitCard extends ResourceCard {
+  counterfeit: true
+  returnEffect: CounterfeitReturnEffect
 }
 
 export interface RenownCard {
@@ -104,7 +113,10 @@ export interface Player {
   hoard: ResourceCard[]
   workOrder: WorkOrderCard | null
   renownCards: RenownCard[]
+  /** Rogue only — draw pile for Counterfeit cards */
   counterfeitCards: CounterfeitCard[]
+  /** Rogue only — Counterfeit cards currently in hand and available to place */
+  counterfeitHand: CounterfeitCard[]
   debtTokens: number
   momentumTokens: number
   clanLocation: Location | null
@@ -187,6 +199,21 @@ export interface GameState {
   turnActionsUsed: number
   locationsUsedThisTurn: Location[]
   sellPhaseDone: boolean
+  /** Rogue off-turn interrupt before another player's sell phase */
+  rogueShadowsPending: {
+    rogueId: string
+    sellerId: string
+  } | null
+  /** Current turn player whose sell phase already offered/skipped the Rogue interrupt */
+  rogueShadowsPromptedForTurn: string | null
+  /** Rogue counterfeit return effect waiting on a player choice */
+  rogueCounterfeitEffectPending: {
+    rogueId: string
+    cardName: string
+    cardImageFile: string
+    effect: CounterfeitReturnEffect
+    source: string
+  } | null
 
   clashResult: {
     location: Location
