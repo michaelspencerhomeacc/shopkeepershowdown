@@ -10,6 +10,18 @@ import { abandonRoom } from '../lib/rooms'
 import type { Player, ResourceCard } from '../types'
 
 const PAWN_COLORS = ['bg-red-500','bg-blue-500','bg-green-500','bg-yellow-400','bg-purple-500','bg-pink-500']
+const REP_SCORE_TABLE = [0, 1, 3, 5, 8, 11, 14, 18, 22]
+
+function repScore(tokens: number) {
+  return REP_SCORE_TABLE[Math.min(tokens, REP_SCORE_TABLE.length - 1)]
+}
+
+function liveScore(player: Player) {
+  const coins = player.coins + (player.classId === 'monk' ? player.momentumTokens : 0)
+  const repPoints = repScore(player.rep.ARM) + repScore(player.rep.CON) + repScore(player.rep.TRI) + repScore(player.rep.TRG)
+  const sets = Math.min(player.rep.ARM, player.rep.CON, player.rep.TRI, player.rep.TRG)
+  return coins + repPoints + sets * 6
+}
 
 interface Props {
   /** Name of the local player — used in online mode to lock other players' areas.
@@ -23,14 +35,17 @@ interface Props {
 
 export function Game({ localPlayerName, roomId, onLeave }: Props) {
   const {
-    players, round, nextRound, resetGame, activePlayerId, setActivePlayer,
-    currentTurnPlayerId, startingDraft, completeStartingDraftPick,
+    players, round, resetGame,
+    currentTurnPlayerId, turnActionsUsed, bonusActionsThisTurn, startingDraft, completeStartingDraftPick,
   } = useGameStore()
 
   const isOnline = !!localPlayerName && !!roomId
 
   const localPlayer = localPlayerName ? players.find(p => p.name === localPlayerName) : null
   const isMyTurn = !localPlayerName || (localPlayer?.id === currentTurnPlayerId)
+  const currentPlayer = players.find(p => p.id === currentTurnPlayerId) ?? players[0]
+  const maxActions = 3 + bonusActionsThisTurn
+  const actionsLeft = Math.max(0, maxActions - turnActionsUsed)
   const opponents = localPlayer
     ? players
         .map((p, i) => ({ player: p, index: i }))
@@ -173,8 +188,83 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
         </div>
       )}
 
-      {/* Top bar */}
-      <div className="flex items-center justify-between panel px-4 py-1.5">
+      {/* Top menu */}
+      <div className="panel px-3 py-2">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="min-w-0">
+            <h1 className="font-display font-bold text-gold-400 text-lg tracking-wide leading-tight">
+              Shopkeeper Showdown
+            </h1>
+            <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Round {round} / 6</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-gold-500/30 bg-gold-950/20 px-3 py-1.5">
+              {currentPlayer && (
+                <img src={markerSrc(currentPlayer.classId)} alt={currentPlayer.name} className="w-8 h-8 rounded-full object-cover border border-gold-400/60" />
+              )}
+              <div>
+                <div className="text-[9px] uppercase tracking-widest text-gold-300 font-bold">Current Player</div>
+                <div className="text-sm font-display font-bold text-parchment-100 leading-tight">{currentPlayer?.name ?? '-'}</div>
+              </div>
+            </div>
+            <div className="rounded-lg border border-parchment-800/40 bg-ink-950/50 px-3 py-1.5 text-center">
+              <div className="text-[9px] uppercase tracking-widest text-parchment-500 font-bold">Actions</div>
+              <div className="text-sm font-display font-bold text-gold-300 tabular-nums">{actionsLeft}/{maxActions}</div>
+            </div>
+            <button
+              onClick={() => {
+                if (isOnline) {
+                  setShowLeaveConfirm(true)
+                } else {
+                  if (confirm('End the game and return to lobby?')) {
+                    resetGame()
+                    onLeave?.()
+                  }
+                }
+              }}
+              className="btn-secondary text-xs px-3 py-2"
+            >
+              Lobby
+            </button>
+          </div>
+        </div>
+
+        <div className="flex gap-2 overflow-x-auto pb-0.5">
+          {players.map((p, i) => {
+            const isCurrent = p.id === currentTurnPlayerId
+            return (
+              <div
+                key={p.id}
+                className={`min-w-[170px] flex items-center gap-2 rounded-lg border px-2.5 py-2 bg-ink-950/45 ${
+                  isCurrent ? 'border-gold-400/70 shadow shadow-gold-900/30' : 'border-parchment-800/35'
+                }`}
+              >
+                <div className="relative flex-shrink-0">
+                  <div className={`w-2.5 h-2.5 rounded-full absolute -left-0.5 -top-0.5 ${PAWN_COLORS[i % PAWN_COLORS.length]}`} />
+                  <img src={markerSrc(p.classId)} alt={p.name} className={`w-9 h-9 rounded-full object-cover border ${isCurrent ? 'border-gold-300' : 'border-parchment-700/50'}`} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className={`text-xs font-display font-bold truncate ${isCurrent ? 'text-gold-200' : 'text-parchment-100'}`}>{p.name}</div>
+                  <div className="text-[10px] text-parchment-500 truncate">{CLASSES.find(c => c.id === p.classId)?.name ?? p.classId}</div>
+                </div>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-right">
+                  <div>
+                    <div className="text-[8px] uppercase tracking-widest text-parchment-600 font-bold">Score</div>
+                    <div className="text-xs font-bold text-gold-300 tabular-nums">{liveScore(p)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[8px] uppercase tracking-widest text-parchment-600 font-bold">Active</div>
+                    <div className="text-xs font-bold text-blue-200 tabular-nums">{p.classId === 'monk' ? p.momentumTokens : p.activeTokens}</div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Legacy top bar */}
+      <div className="hidden">
         <div className="flex items-center gap-4">
           <h1 className="font-display font-bold text-gold-400 text-base tracking-wide">
             Shopkeeper Showdown
@@ -192,32 +282,9 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
         </div>
         <div className="flex items-center gap-3">
           {/* Active player selector — only shown in local/pass-and-play */}
-          {!localPlayerName && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-parchment-500">Active:</span>
-              <select
-                value={activePlayerId}
-                onChange={e => setActivePlayer(e.target.value)}
-                className="bg-ink-800 border border-parchment-700/30 rounded px-2 py-0.5 text-xs text-parchment-200"
-              >
-                {players.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
           <div className="text-parchment-300 text-xs">
             Round <span className="font-bold text-gold-300">{round}</span> / 6
           </div>
-          {!localPlayerName && (
-            <button
-              onClick={nextRound}
-              disabled={round >= 6}
-              className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50"
-            >
-              Next Round
-            </button>
-          )}
           <button
             onClick={() => {
               if (isOnline) {
