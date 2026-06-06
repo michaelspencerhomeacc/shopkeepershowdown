@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type Dispatch, type SetStateAction } from 'react'
 import { useGameStore } from '../store/gameStore'
 import type { Location, Player, GameState, DuelStake, ResourceCard } from '../types'
 import { LocationActionPanel, DrawnCardsToast } from './LocationActionPanel'
@@ -127,6 +127,17 @@ function coinTokenImages(amount: number): string[] {
   return imgs
 }
 
+type DraggedCounterfeit = {
+  playerId: string
+  cardId: string
+  from: 'counterfeitHand' | 'window'
+  fromIdx: number
+} | null
+
+function isCounterfeitResource(card: ResourceCard | null | undefined) {
+  return !!card && 'counterfeit' in card && card.counterfeit === true
+}
+
 export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps) {
   const {
     players, pawns, movePawn,
@@ -142,7 +153,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     righteousDuelResult, dismissDuelResult,
     appraisePeek, completeAppraise, foragePeek, completeForage,
     endgame, advanceFinalSell,
-    adjustCoins, discardResource, placeInWindow,
+    adjustCoins, discardResource, placeInWindow, moveFromWindowToHoard, reorderCounterfeitHand,
     resetGame, addLog,
     rn04RerollPending, resolveRn04Reroll, rn04ForcedRoll, dismissRn04ForcedRoll,
     ambushPending, ambushResult, springAmbush, passAmbush, acknowledgeAmbush,
@@ -172,6 +183,8 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
   const [showCheatSheet, setShowCheatSheet] = useState(false)
   const [sellPhaseOpen, setSellPhaseOpen] = useState(false)
+  const [draggedCounterfeit, setDraggedCounterfeit] = useState<DraggedCounterfeit>(null)
+
   const [ambushBreakWinIdx, setAmbushBreakWinIdx] = useState<number | null>(null)
   // Window-break shatter animation
   const [shatterInfo, setShatterInfo] = useState<{ windowLines: string[]; cause: string } | null>(null)
@@ -583,7 +596,6 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
   function playerIdx(playerId: string) {
     return players.findIndex(p => p.id === playerId)
   }
-
 
   function handleLocationClick(locId: Location) {
     if (!canAct) return
@@ -1868,14 +1880,17 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
         />
       )}
 
-      {/* Hoard overflow — only shown to the player who is over the limit */}
-      {overflowPlayer && isMe(overflowPlayer.id) && (
-        <HoardOverflowModal
-          player={overflowPlayer}
-          onDiscard={(cardId) => discardResource(overflowPlayer.id, cardId, 'hoard')}
-          onPlaceInWindow={(cardId, windowIdx) => placeInWindow(overflowPlayer.id, cardId, windowIdx)}
-        />
-      )}
+    {overflowPlayer && isMe(overflowPlayer.id) && (
+      <HoardOverflowModal
+        player={overflowPlayer}
+        onDiscard={(cardId) => discardResource(overflowPlayer.id, cardId, 'hoard')}
+        onPlaceInWindow={(cardId, windowIdx) => placeInWindow(overflowPlayer.id, cardId, windowIdx)}
+        draggedCounterfeit={draggedCounterfeit}
+        setDraggedCounterfeit={setDraggedCounterfeit}
+        moveFromWindowToHoard={moveFromWindowToHoard}
+        reorderCounterfeitHand={reorderCounterfeitHand}
+      />
+    )}
 
       {/* Patience of Stone Forage 2 waits until hoard overflow has been resolved. */}
       {!overflowPlayer && patienceForagePeek && isMe(patienceForagePeek.playerId) && (
@@ -2797,10 +2812,18 @@ function HoardOverflowModal({
   player,
   onDiscard,
   onPlaceInWindow,
+  draggedCounterfeit,
+  setDraggedCounterfeit,
+  moveFromWindowToHoard,
+  reorderCounterfeitHand,
 }: {
   player: Player
   onDiscard: (cardId: string) => void
   onPlaceInWindow: (cardId: string, windowIdx: number) => void
+  draggedCounterfeit: DraggedCounterfeit
+  setDraggedCounterfeit: Dispatch<SetStateAction<DraggedCounterfeit>>
+  moveFromWindowToHoard: (playerId: string, windowIdx: number) => void
+  reorderCounterfeitHand: (playerId: string, fromIdx: number, toIdx: number) => void
 }) {
   const [placingCardId, setPlacingCardId] = useState<string | null>(null)
   const [showWorkOrder, setShowWorkOrder] = useState(false)
@@ -2816,28 +2839,34 @@ function HoardOverflowModal({
   return (
     <div className="fixed inset-0 z-[450] flex items-center justify-center bg-black/70">
       <div className="bg-ink-900 border-2 border-red-500/60 rounded-xl p-5 shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
         <div className="text-center mb-4">
-          <div className="text-lg font-display font-bold text-red-400">⚠ Hoard Overflow — {player.name}</div>
+          <div className="text-lg font-display font-bold text-red-400">
+            ⚠ Hoard Overflow — {player.name}
+          </div>
           <div className="text-base text-parchment-300 mt-0.5">
             {player.hoard.length}/8 cards — discard {over} more to continue.
           </div>
         </div>
 
-        {/* Work Order reference */}
         {player.workOrder && (
           <div className="mb-4">
             <button
+              type="button"
               onClick={() => setShowWorkOrder(v => !v)}
               className="w-full flex items-center justify-between px-3 py-2 bg-amber-950/40 border border-amber-700/30 rounded-lg text-sm text-amber-300 font-semibold hover:bg-amber-900/40 transition-colors"
             >
               <span>📋 Work Order: {player.workOrder.name}</span>
               <span>{showWorkOrder ? '▲' : '▼'}</span>
             </button>
+
             {showWorkOrder && (
               <div className="px-3 py-2 bg-amber-950/20 border-x border-b border-amber-700/30 rounded-b-lg space-y-0.5">
-                <div className="text-sm text-parchment-400">Recipe: <RecipeDisplay recipe={player.workOrder.recipe} /></div>
-                <div className="text-sm text-gold-400 font-semibold">Reward: ${player.workOrder.price}</div>
+                <div className="text-sm text-parchment-400">
+                  Recipe: <RecipeDisplay recipe={player.workOrder.recipe} />
+                </div>
+                <div className="text-sm text-parchment-400">
+                  Reward: {player.workOrder.price} coins
+                </div>
               </div>
             )}
           </div>
@@ -2845,20 +2874,68 @@ function HoardOverflowModal({
 
         {/* Windows section */}
         <div className="mb-5">
-          <div className="text-sm font-semibold text-parchment-400 uppercase tracking-wide mb-2">Shop Windows</div>
+          <div className="text-sm font-semibold text-parchment-400 uppercase tracking-wide mb-2">
+            Shop Windows
+          </div>
+
           <div className="flex gap-2 flex-wrap">
             {player.windows.map((w, i) => {
-              const isTarget = placingCardId !== null && !w.card && w.status !== 'shuttered' && w.status !== 'broken'
-              const isEmpty = !w.card && w.status !== 'shuttered' && w.status !== 'broken'
+              const windowCard = w.card
+
+              const isTarget =
+                placingCardId !== null &&
+                !windowCard &&
+                w.status !== 'shuttered' &&
+                w.status !== 'broken'
+
+              const isEmpty =
+                !windowCard &&
+                w.status !== 'shuttered' &&
+                w.status !== 'broken'
+
+              const canDropCounterfeit =
+                player.classId === 'rogue' &&
+                draggedCounterfeit?.playerId === player.id &&
+                draggedCounterfeit.from === 'counterfeitHand' &&
+                w.status !== 'shuttered' &&
+                w.status !== 'broken'
+
               return (
                 <button
                   key={i}
-                  disabled={w.status === 'broken' || w.status === 'shuttered' || (!isTarget && !!w.card)}
+                  type="button"
+                  disabled={
+                    w.status === 'broken' ||
+                    w.status === 'shuttered' ||
+                    (!isTarget && !!windowCard && !canDropCounterfeit)
+                  }
                   onClick={() => {
                     if (placingCardId && isEmpty) {
                       onPlaceInWindow(placingCardId, i)
                       setPlacingCardId(null)
                     }
+                  }}
+                  onDragOver={e => {
+                    if (canDropCounterfeit) {
+                      e.preventDefault()
+                    }
+                  }}
+                  onDrop={e => {
+                    e.preventDefault()
+
+                    if (
+                      !draggedCounterfeit ||
+                      draggedCounterfeit.playerId !== player.id ||
+                      draggedCounterfeit.from !== 'counterfeitHand' ||
+                      player.classId !== 'rogue'
+                    ) {
+                      return
+                    }
+
+                    if (w.status === 'broken' || w.status === 'shuttered') return
+
+                    onPlaceInWindow(draggedCounterfeit.cardId, i)
+                    setDraggedCounterfeit(null)
                   }}
                   style={{ width: 80, height: 110 }}
                   className={`rounded-lg border-2 flex flex-col items-center justify-center gap-1 text-center transition-all text-sm font-semibold ${
@@ -2866,8 +2943,14 @@ function HoardOverflowModal({
                       ? 'bg-red-900/60 border-red-600/60 text-red-300 cursor-not-allowed'
                       : w.status === 'shuttered'
                       ? 'bg-gray-800/60 border-gray-600/40 text-gray-400 cursor-not-allowed'
-                      : w.card
-                      ? `${WINDOW_TYPE_BG[w.card.type] ?? 'bg-ink-700 border-parchment-600/40'} text-parchment-100 cursor-default`
+                      : windowCard
+                      ? `${WINDOW_TYPE_BG[windowCard.type] ?? 'bg-ink-700 border-parchment-600/40'} text-parchment-100 ${
+                          player.classId === 'rogue' && isCounterfeitResource(windowCard)
+                            ? 'cursor-grab'
+                            : 'cursor-default'
+                        }`
+                      : canDropCounterfeit
+                      ? 'bg-slate-500/20 border-slate-300 text-slate-200 cursor-copy animate-pulse'
                       : isTarget
                       ? 'bg-gold-500/20 border-gold-400 text-gold-300 cursor-pointer hover:bg-gold-500/30 animate-pulse'
                       : 'bg-ink-800/60 border-parchment-700/30 border-dashed text-parchment-600 cursor-not-allowed'
@@ -2883,56 +2966,176 @@ function HoardOverflowModal({
                       <span className="text-lg">🔒</span>
                       <span className="text-xs">Shuttered</span>
                     </>
-                  ) : w.card ? (
+                  ) : windowCard ? (
+                    <div
+                      draggable={player.classId === 'rogue' && isCounterfeitResource(windowCard)}
+                      onDragStart={e => {
+                        if (player.classId !== 'rogue') return
+                        if (!isCounterfeitResource(windowCard)) return
+
+                        e.stopPropagation()
+
+                        setDraggedCounterfeit({
+                          playerId: player.id,
+                          cardId: windowCard.id,
+                          from: 'window',
+                          fromIdx: i,
+                        })
+                      }}
+                      onDragEnd={() => setDraggedCounterfeit(null)}
+                      className={
+                        player.classId === 'rogue' && isCounterfeitResource(windowCard)
+                          ? 'cursor-grab active:cursor-grabbing'
+                          : ''
+                      }
+                    >
+                      <div className="text-xs font-bold">{windowCard.type}</div>
+                      <div className="text-[10px] leading-tight px-1 line-clamp-3">
+                        {windowCard.name}
+                      </div>
+                      {player.classId === 'rogue' && isCounterfeitResource(windowCard) && (
+                        <div className="text-[9px] text-slate-300 mt-1">
+                          Drag
+                        </div>
+                      )}
+                    </div>
+                  ) : isTarget || canDropCounterfeit ? (
                     <>
-                      <span className="text-xs font-bold uppercase">{w.card.type}</span>
-                      <span className="text-xs leading-tight px-1">{w.card.name}</span>
+                      <span className="text-lg">+</span>
+                      <span className="text-xs">Place here</span>
                     </>
-                  ) : isTarget ? (
-                    <span className="text-xs leading-tight px-1">Place here →</span>
                   ) : (
-                    <span className="text-xs text-parchment-600">Empty</span>
+                    <>
+                      <span className="text-lg">—</span>
+                      <span className="text-xs">Empty</span>
+                    </>
                   )}
                 </button>
               )
             })}
           </div>
-          {placingCardId && (
-            <div className="text-sm text-gold-400 mt-2 font-semibold">
-              Click a window slot above to place, or click the card again to cancel
-            </div>
-          )}
         </div>
 
-        {/* Hoard section */}
+        {/* Rogue Counterfeit Hand */}
+        {player.classId === 'rogue' && (
+          <div
+            className="mb-5 rounded-lg border border-slate-500/40 bg-slate-950/40 p-2"
+            onDragOver={e => {
+              if (draggedCounterfeit?.playerId === player.id) {
+                e.preventDefault()
+              }
+            }}
+            onDrop={e => {
+              e.preventDefault()
+
+              if (!draggedCounterfeit || draggedCounterfeit.playerId !== player.id) return
+
+              if (draggedCounterfeit.from === 'window') {
+                moveFromWindowToHoard(player.id, draggedCounterfeit.fromIdx)
+              }
+
+              setDraggedCounterfeit(null)
+            }}
+          >
+            <div className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-2">
+              Counterfeit Hand
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 min-h-[96px]">
+              {player.counterfeitHand.length === 0 ? (
+                <div className="text-xs text-slate-500 italic">
+                  No drawn counterfeits
+                </div>
+              ) : (
+                player.counterfeitHand.map((card, index) => (
+                  <div
+                    key={card.id}
+                    draggable
+                    onDragStart={() => {
+                      setDraggedCounterfeit({
+                        playerId: player.id,
+                        cardId: card.id,
+                        from: 'counterfeitHand',
+                        fromIdx: index,
+                      })
+                    }}
+                    onDragEnd={() => setDraggedCounterfeit(null)}
+                    onDragOver={e => {
+                      if (draggedCounterfeit?.playerId === player.id) {
+                        e.preventDefault()
+                      }
+                    }}
+                    onDrop={e => {
+                      e.preventDefault()
+
+                      if (!draggedCounterfeit || draggedCounterfeit.playerId !== player.id) return
+
+                      if (draggedCounterfeit.from === 'counterfeitHand') {
+                        reorderCounterfeitHand(player.id, draggedCounterfeit.fromIdx, index)
+                      }
+
+                      if (draggedCounterfeit.from === 'window') {
+                        moveFromWindowToHoard(player.id, draggedCounterfeit.fromIdx)
+                      }
+
+                      setDraggedCounterfeit(null)
+                    }}
+                    className="cursor-grab active:cursor-grabbing"
+                  >
+                    <ResourceCardMini card={card} size="lg" />
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="text-[10px] text-slate-400 mt-2">
+              Drag counterfeits into windows, back here, or reorder them.
+            </div>
+          </div>
+        )}
+
+        {/* Hoard cards */}
         <div>
           <div className="text-sm font-semibold text-parchment-400 uppercase tracking-wide mb-2">
-            Hoard ({player.hoard.length}/8)
+            Hoard
           </div>
-          <div className="flex flex-wrap gap-2">
+
+          <div className="flex flex-wrap gap-2 justify-center">
             {player.hoard.map(card => {
               const isSelected = placingCardId === card.id
+
               return (
-                <div key={card.id} className="flex flex-col items-center gap-1">
-                  <div
+                <div
+                  key={card.id}
+                  className={`rounded-lg border p-1 space-y-1 ${
+                    isSelected
+                      ? 'border-gold-400 bg-gold-500/10'
+                      : 'border-parchment-700/30 bg-ink-800/50'
+                  }`}
+                >
+                  <ResourceCardMini
+                    card={card}
+                    size="lg"
+                    selected={isSelected}
                     onClick={() => setPlacingCardId(isSelected ? null : card.id)}
-                    className={`cursor-pointer rounded-lg transition-all ${
-                      isSelected ? 'ring-2 ring-gold-400 ring-offset-1 ring-offset-ink-900' : 'hover:ring-1 hover:ring-parchment-500'
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setPlacingCardId(isSelected ? null : card.id)}
+                    className={`text-xs rounded px-2 py-0.5 w-full transition-colors ${
+                      isSelected
+                        ? 'bg-gold-600 text-ink-950 font-bold'
+                        : 'bg-ink-700 hover:bg-ink-600 text-parchment-300'
                     }`}
                   >
-                    <ResourceCardTile card={card} size="sm" />
-                  </div>
-                  {isSelected && (
-                    <button
-                      onClick={() => { onDiscard(card.id); setPlacingCardId(null) }}
-                      className="text-xs bg-red-900/80 hover:bg-red-800 text-red-200 font-bold rounded px-2 py-0.5 w-full"
-                    >
-                      Discard
-                    </button>
-                  )}
+                    {isSelected ? 'Selected' : 'Place'}
+                  </button>
+
                   {!isSelected && (
                     <button
-                      onClick={() => { onDiscard(card.id) }}
+                      type="button"
+                      onClick={() => onDiscard(card.id)}
                       className="text-xs bg-red-900/60 hover:bg-red-800/80 text-red-300 rounded px-2 py-0.5 w-full opacity-60 hover:opacity-100 transition-opacity"
                     >
                       Discard

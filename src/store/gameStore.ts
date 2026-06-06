@@ -968,7 +968,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }))
   },
 
-    reorderCounterfeitHand(playerId, fromIdx, toIdx) {
+  reorderCounterfeitHand(playerId, fromIdx, toIdx) {
     if (fromIdx === toIdx) return
 
     set(s => ({
