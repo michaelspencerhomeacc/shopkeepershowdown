@@ -3958,13 +3958,15 @@ function RogueCounterfeitActionModal({
 
   return (
     <div className="fixed inset-0 z-[370] flex items-center justify-center bg-black/70 px-4">
-      <div className="bg-ink-900 border-2 border-slate-400/70 rounded-xl p-5 shadow-2xl max-w-lg w-full text-center space-y-3">
+      <div className="bg-ink-900 border-2 border-slate-400/70 rounded-xl p-5 shadow-2xl w-[95vw] max-w-6xl max-h-[90vh] overflow-y-auto text-center space-y-3">
         <div className="flex items-center justify-center gap-3">
           <img src={pending.cardImageFile} alt={pending.cardName} className="w-16 h-24 rounded object-cover border border-slate-400/60 shadow-lg" />
           <div className="text-left">
             <div className="text-lg font-display font-bold text-slate-200">{pending.cardName}</div>
             <div className="text-xs uppercase tracking-widest text-slate-400">Counterfeit returned</div>
-            <div className="text-sm text-parchment-300 mt-1">Resolve {pending.effect.kind} {pending.effect.amount}</div>
+            <div className="text-sm text-parchment-300 mt-1">
+              TEST WIDE MODAL - Resolve {pending.effect.kind} {pending.effect.amount}
+            </div>
           </div>
         </div>
 
@@ -3999,20 +4001,42 @@ function RogueCounterfeitActionModal({
         )}
 
         {pending.effect.kind === 'trade' && (
-          <div className="space-y-2">
-            <div className="text-xs text-parchment-500 text-left">Your cards:</div>
-            <div className="flex flex-wrap gap-1.5 justify-center">
-              {tradeCards.map(c => (
-                <ResourceCardMini key={c.id} card={c} size="lg" selected={tradeCardIds.includes(c.id)} onClick={() => toggleTradeCard(c.id)} />
-              ))}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-left">
+              <div>
+                <div className="text-xs text-parchment-500 mb-2">Your cards:</div>
+                <div className="grid grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
+                  {tradeCards.map(c => (
+                    <ResourceCardMini
+                      key={c.id}
+                      card={c}
+                      size="lg"
+                      selected={tradeCardIds.includes(c.id)}
+                      onClick={() => toggleTradeCard(c.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-parchment-500 mb-2">Flea Market:</div>
+                <div className="grid grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2">
+                  {fleaOptions.map(({ c, i }) => c && (
+                    <ResourceCardMini
+                      key={`${c.id}-${i}`}
+                      card={c}
+                      size="lg"
+                      selected={tradeFleaIdxs.includes(i)}
+                      onClick={() => toggleFleaSlot(i)}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="text-xs text-parchment-500 text-left">Flea Market:</div>
-            <div className="flex flex-wrap gap-1.5 justify-center">
-              {fleaOptions.map(({ c, i }) => c && (
-                <ResourceCardMini key={`${c.id}-${i}`} card={c} size="lg" selected={tradeFleaIdxs.includes(i)} onClick={() => toggleFleaSlot(i)} />
-              ))}
+
+            <div className="text-[10px] text-parchment-500">
+              Pick matching counts, up to {pending.effect.amount}.
             </div>
-            <div className="text-[10px] text-parchment-500">Pick matching counts, up to {pending.effect.amount}.</div>
           </div>
         )}
 
