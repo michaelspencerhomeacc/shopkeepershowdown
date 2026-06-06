@@ -3965,7 +3965,7 @@ function RogueCounterfeitActionModal({
             <div className="text-lg font-display font-bold text-slate-200">{pending.cardName}</div>
             <div className="text-xs uppercase tracking-widest text-slate-400">Counterfeit returned</div>
             <div className="text-sm text-parchment-300 mt-1">
-              TEST WIDE MODAL - Resolve {pending.effect.kind} {pending.effect.amount}
+              Resolve {pending.effect.kind} {pending.effect.amount}
             </div>
           </div>
         </div>

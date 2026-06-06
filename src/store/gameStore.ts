@@ -2142,17 +2142,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!player || !player.workOrder) return
 
     const cardIdSet = new Set(cardIds)
-    // Cards can come from hoard or windows
-    const fromHoard = player.hoard.filter(c => cardIdSet.has(c.id))
-    const fromWindows = player.windows.flatMap(w => (w.card && cardIdSet.has(w.card.id) ? [w.card] : []))
-    const spentCards = [...fromHoard, ...fromWindows]
-    const discardedCards = spentCards.filter(c => !isCounterfeitCard(c))
-    const removedCounterfeitCount = spentCards.length - discardedCards.length
-    const baseGain = player.workOrder.price
-    // Forge of Ironpeak (rn02) passive: +3 bonus coins on craft completion
-    const rn02Bonus = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn02') ? 3 : 0
-    const gained = baseGain + rn02Bonus
 
+    // Cards can come from hoard, windows, or Rogue's drawn counterfeit hand
+    const fromHoard = player.hoard.filter(c => cardIdSet.has(c.id))
+
+    const fromWindows = player.windows.flatMap(w =>
+      w.card && cardIdSet.has(w.card.id) ? [w.card] : []
+    )
+
+    const fromCounterfeitHand =
+      player.classId === 'rogue'
+        ? player.counterfeitHand.filter(c => cardIdSet.has(c.id))
+        : []
+
+    const spentCards = [
+      ...fromHoard,
+      ...fromWindows,
+      ...fromCounterfeitHand,
+    ]
+
+    const counterfeitCards = spentCards.filter(isCounterfeitCard)
+    const discardedCards = spentCards.filter(c => !isCounterfeitCard(c))
+    const removedCounterfeitCount = counterfeitCards.length
+
+    const baseGain = player.workOrder.price
+
+    // Forge of Ironpeak (rn02) passive: +3 bonus coins on craft completion
+    const rn02Bonus =
+      player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn02')
+        ? 3
+        : 0
+
+    const gained = baseGain + rn02Bonus
     const discountUsed = player.craftDiscount > 0
 
     set(s => ({
@@ -2164,10 +2185,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
               workOrder: null,
               craftDiscount: 0,
               coins: p.coins + gained,
+
+              // Remove spent normal cards from hoard
               hoard: p.hoard.filter(c => !cardIdSet.has(c.id)),
+
+              // Remove spent drawn counterfeits from Rogue's hand
+              counterfeitHand: p.counterfeitHand.filter(c => !cardIdSet.has(c.id)),
+
               stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIdSet.has(id)),
+
+              // Remove spent window cards
               windows: p.windows.map(w =>
-                w.card && cardIdSet.has(w.card.id) ? { ...w, card: null } : w
+                w.card && cardIdSet.has(w.card.id)
+                  ? { ...w, card: null, stolen: false }
+                  : w
               ),
             }
           : p
@@ -2176,10 +2207,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
         `${player.name} completed Work Order "${player.workOrder!.name}" — spent ${spentCards.length} cards, gained ${gained} coins.` +
         (discountUsed ? ' (Forge of Ironpeak discount applied)' : '') +
         (rn02Bonus > 0 ? ` ◆ Forge of Ironpeak — +${rn02Bonus} bonus coins.` : '') +
-        (removedCounterfeitCount > 0 ? ` ${removedCounterfeitCount} Counterfeit card${removedCounterfeitCount !== 1 ? 's were' : ' was'} removed from play.` : ''),
+        (removedCounterfeitCount > 0
+          ? ` ${removedCounterfeitCount} Counterfeit card${removedCounterfeitCount !== 1 ? 's were' : ' was'} returned to the Rogue.`
+          : ''),
         playerId
       ), ...s.actionLog.slice(0, 49)],
     }))
+
+    if (counterfeitCards.length > 0) {
+      get().returnCounterfeitsToRogue(counterfeitCards, playerId, 'crafted')
+    }
   },
 
   pitchCamp(playerId) {
