@@ -899,7 +899,21 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               onAuction={(cardId, fromZone, windowIdx) => auction(rogueCounterfeitEffectPending.rogueId, cardId, fromZone, windowIdx)}
               onTrade={(cardIds, fleaSlotIdxs) => tradeWithFleaMarket(rogueCounterfeitEffectPending.rogueId, cardIds, fleaSlotIdxs)}
               onBreak={(targetId, windowIdx) => breakWindow(rogueCounterfeitEffectPending.rogueId, targetId, windowIdx)}
-              onDone={clearRogueCounterfeitEffect}
+              onDone={() => {
+                clearRogueCounterfeitEffect()
+
+                const state = useGameStore.getState()
+
+                if (
+                  state.endgame?.phase === 'final-sell' &&
+                  !state.rogueCounterfeitEffectPending &&
+                  state.rogueCounterfeitEffectQueue.length === 0 &&
+                  !state.rn04RerollPending &&
+                  !state.trickShotPending
+                ) {
+                  state.advanceFinalSell()
+                }
+              }}
             />
           : (
             <WaitingOverlay
@@ -3965,7 +3979,7 @@ function RogueCounterfeitActionModal({
             <div className="text-lg font-display font-bold text-slate-200">{pending.cardName}</div>
             <div className="text-xs uppercase tracking-widest text-slate-400">Counterfeit returned</div>
             <div className="text-sm text-parchment-300 mt-1">
-              Resolve {pending.effect.kind} {pending.effect.amount}
+               Resolve {pending.effect.kind} {pending.effect.amount}
             </div>
           </div>
         </div>
