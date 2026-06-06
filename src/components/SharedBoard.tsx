@@ -156,7 +156,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
     workOrderDeck,
     townCrierPeek, completeTownCrier, activeVisitors, visitorDemandRemaining,
     professionalSlots,
-    actionLog, lastGuildFenceType,
+    actionLog, lastGuildFencedCard,
     steal, heist,
   } = useGameStore()
 
@@ -1119,12 +1119,15 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
                     </div>
                   )}
 
-                  {/* Thieves' Guild — last fenced type badge */}
-                  {loc.id === 'thieves-guild' && lastGuildFenceType && (
-                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
-                      <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold border-2 shadow-lg shadow-black/60 ${TYPE_CHIP[lastGuildFenceType]}`}>
-                        <span className="text-sm leading-none">{TYPE_ICON[lastGuildFenceType]}</span>
-                        <span className="uppercase tracking-wide">Fence {lastGuildFenceType}</span>
+                  {/* Thieves' Guild - last fenced card stays visible here for the rest of the game */}
+                  {loc.id === 'thieves-guild' && lastGuildFencedCard && (
+                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex items-end gap-2">
+                      <div className="w-14 h-[78px] overflow-hidden rounded border-2 border-gold-300/70 bg-ink-950 shadow-lg shadow-black/70">
+                        <img src={lastGuildFencedCard.imageFile} alt={lastGuildFencedCard.name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className={`mb-1 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-extrabold border-2 shadow-lg shadow-black/60 ${TYPE_CHIP[lastGuildFencedCard.type]}`}>
+                        <span className="text-sm leading-none">{TYPE_ICON[lastGuildFencedCard.type]}</span>
+                        <span className="uppercase tracking-wide">Fence {lastGuildFencedCard.type}</span>
                       </div>
                     </div>
                   )}

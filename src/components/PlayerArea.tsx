@@ -53,6 +53,8 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
 
   const PAWN_COLORS = ['bg-red-500', 'bg-blue-500', 'bg-green-500', 'bg-yellow-400', 'bg-purple-500', 'bg-pink-500']
   const playerColor = PAWN_COLORS[playerIndex % PAWN_COLORS.length]
+  const maxActions = 3 + bonusActionsThisTurn
+  const actionsLeft = Math.max(0, maxActions - turnActionsUsed)
 
   function handleWindowClick(windowIdx: number) {
     if (placingCardId) {
@@ -105,6 +107,49 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
         </div>
 
       </div>
+
+      {/* Turn controls — shown at the top of the active player's area */}
+      {isOwn && isMyTurn && (
+        <div className="rounded-lg border border-gold-500/30 bg-ink-950/45 px-3 py-2">
+          {showEndTurnWarn && (
+            <div className="mb-2 bg-amber-900/30 border border-amber-600/40 rounded-lg px-3 py-2 text-xs text-amber-200">
+              You have empty windows. Fill them or confirm end turn.
+              <div className="flex gap-2 mt-1.5">
+                <button onClick={() => setShowEndTurnWarn(false)} className="btn-secondary text-xs px-2 py-0.5">Cancel</button>
+                <button onClick={() => { setShowEndTurnWarn(false); endTurn() }} className="btn-primary text-xs px-2 py-0.5">End Anyway</button>
+              </div>
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Actions</div>
+              <div className="text-sm font-display font-bold text-gold-300 tabular-nums">{actionsLeft}/{maxActions}</div>
+            </div>
+            <div className="flex items-center gap-1">
+              {Array.from({ length: maxActions }, (_, i) => (
+                <div
+                  key={i}
+                  className={`w-3 h-3 rounded-full border-2 transition-all ${
+                    i < turnActionsUsed
+                      ? 'bg-ink-700 border-parchment-700/30 opacity-40'
+                      : 'bg-gold-400/60 border-gold-400'
+                  }`}
+                  title={`Action ${i + 1}`}
+                />
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                const hasEmpty = player.windows.some(w => w.status === 'normal' && !w.card)
+                if (hasEmpty) { setShowEndTurnWarn(true) } else { endTurn() }
+              }}
+              className="ml-auto btn-primary text-sm px-4 py-2 font-semibold"
+            >
+              End Turn
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Coins + Rep */}
       <div className="flex flex-wrap gap-2 items-center">
@@ -344,7 +389,7 @@ export function PlayerArea({ player, playerIndex, isOwn = true, isMyTurn = true 
 
       {/* End Turn strip — only shown to the active player */}
       {isOwn && isMyTurn && (
-        <div className="border-t border-gold-500/30 pt-3 mt-1">
+        <div className="hidden">
           {showEndTurnWarn && (
             <div className="mb-2 bg-amber-900/30 border border-amber-600/40 rounded-lg px-3 py-2 text-xs text-amber-200">
               You have empty windows. Fill them or confirm end turn.
@@ -433,7 +478,7 @@ function WindowSlotDisplay({
   if (!slot.card) {
     return (
       <div
-        className={`zone w-[100px] h-[140px] flex flex-col items-center justify-center transition-all
+        className={`zone w-[120px] h-[168px] flex flex-col items-center justify-center transition-all
           ${canMove ? 'cursor-pointer' : 'cursor-default'}
           ${isTarget || dragOver ? 'border-gold-400/80 bg-gold-400/10' : canMove ? 'hover:border-parchment-600/60' : ''}
           ${statusOverlay[slot.status]}`}
@@ -475,7 +520,7 @@ function WindowSlotDisplay({
     >
     <ResourceCardTile
       card={slot.card}
-      size="md"
+      size="window"
       stolen={slot.stolen}
       dragCardId={isOwn ? slot.card.id : undefined}
       extraDragData={isOwn ? { 'application/window-index': String(index) } : undefined}

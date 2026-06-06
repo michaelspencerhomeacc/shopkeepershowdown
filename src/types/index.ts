@@ -185,6 +185,8 @@ export interface GameState {
   workOrderDeck: WorkOrderCard[]
 
   actionLog: LogEntry[]
+  /** Last card fenced at the Thieves' Guild; kept visible there instead of discarded. */
+  lastGuildFencedCard: ResourceCard | null
   /** Type of the last card fenced at the Thieves' Guild (shown on board tile) */
   lastGuildFenceType: ResourceType | null
   diceResult: number | null
