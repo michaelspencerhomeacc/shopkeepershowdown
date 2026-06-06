@@ -300,7 +300,7 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
             <div className="flex-1 min-w-0">
               <div className="text-base font-bold text-amber-300">Raiding Party</div>
               <div className="text-sm text-parchment-400 leading-snug">
-                {raidUsed ? '✓ Used this turn' : appraisePeek?.playerId === player.id ? 'Appraise pending…' : 'Place Clan marker · Appraise 1'}
+                {raidUsed ? '✓ Used this turn' : appraisePeek?.playerId === player.id ? 'Appraise pending…' : 'Place Clan marker · Appraise 2'}
               </div>
             </div>
             <TokenCost cost={1} current={player.activeTokens} />
@@ -328,8 +328,8 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
                     </button>
                   ))}
                 </div>
-                <div className="text-xs text-parchment-500">
-                  Any player who uses that location must pay you 2 coins first. Then Appraise 1 (look at top 4 cards, keep 1).
+                <div className="text-sm text-parchment-500">
+                  Any player who uses that location must pay you 2 coins first. After placing, Appraise 2 (look at top 4 cards, keep 2).
                 </div>
                 <button
                   onClick={handleRaid}
@@ -340,10 +340,10 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
               </>
             )}
 
-            {/* Step 2: Appraise 1 — shown after Clan is placed */}
+            {/* Step 2: Appraise 2 — shown after Clan is placed */}
             {appraisePeek?.playerId === player.id && (
               <div className="space-y-1.5">
-                <div className="text-xs font-semibold text-amber-300">Appraise 1 — choose 1 card to keep:</div>
+                <div className="text-xs font-semibold text-amber-300">Appraise 2 — choose 2 cards to keep:</div>
                 <div className="flex flex-wrap gap-1.5">
                   {appraisePeek.cards.map(c => (
                     <ResourceCardMini
@@ -354,7 +354,7 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
                       onClick={() => setAppraiseSelected(prev =>
                         prev.includes(c.id)
                           ? prev.filter(x => x !== c.id)
-                          : prev.length < 1 ? [...prev, c.id] : [c.id]
+                          : prev.length < 2 ? [...prev, c.id] : [c.id]
                       )}
                     />
                   ))}
@@ -365,10 +365,10 @@ function BarbarianAbilities({ player, isActiveTurn }: { player: Player; isActive
                     setAppraiseSelected([])
                     setRaidOpen(false)
                   }}
-                  disabled={appraiseSelected.length === 0}
+                  disabled={appraiseSelected.length < 2}
                   className="btn-primary text-xs px-2 py-0.5 w-full disabled:opacity-50"
                 >
-                  Keep {appraiseSelected.length}/1 → done
+                  Keep {appraiseSelected.length}/2 → done
                 </button>
               </div>
             )}

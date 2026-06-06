@@ -2038,18 +2038,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const player = players.find(p => p.id === playerId)
     if (!player) return
 
-    // Draw 2 cards from deck, mark both stolen
+    // Draw 3 cards from deck, mark both stolen
     const { resourceDeck, resourceDiscard } = get()
     let deck = resourceDeck
     let discard = resourceDiscard
-    if (deck.length < 2 && discard.length > 0) {
+    if (deck.length < 3 && discard.length > 0) {
       deck = shuffle([...deck, ...discard])
       discard = []
       set({ resourceDiscard: discard })
     }
 
     const drawn: ResourceCard[] = []
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < 3; i++) {
       if (deck.length === 0) break
       const [card, ...rest] = deck
       deck = rest
@@ -3045,11 +3045,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       actionLog: [logEntry(`${player.name} used Raiding Party — Clan marker placed at ${clanLoc}.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
 
-    // Trigger Appraise 1 (look at top 4 cards, keep 1)
+    // Trigger Appraise 2 (look at top 4 cards, keep 1)
     const deck = get().resourceDeck
     const cards = deck.slice(0, 4)
     if (cards.length > 0) {
-      set({ appraisePeek: { playerId, cards, maxKeep: 1 } })
+      set({ appraisePeek: { playerId, cards, maxKeep: 2 } })
     }
   },
 

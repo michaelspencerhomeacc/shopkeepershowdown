@@ -7,6 +7,7 @@ import { ActionLog } from '../components/ActionLog'
 import { CLASSES } from '../data/classes'
 import { supabase } from '../lib/supabase'
 import { abandonRoom } from '../lib/rooms'
+import { CheatSheetModal } from '../components/CheatSheetModal'
 import type { Player, ResourceCard } from '../types'
 
 const PAWN_COLORS = ['bg-red-500','bg-blue-500','bg-green-500','bg-yellow-400','bg-purple-500','bg-pink-500']
@@ -119,6 +120,7 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
   // Online-mode leave flow
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
   const [abandonedBy, setAbandonedBy] = useState<string | null>(null) // name of player who left
+  const [showCheatSheet, setShowCheatSheet] = useState(false)
   const isLeavingRef = useRef(false) // true when WE triggered the abandon
 
   // Subscribe to room-events channel for player-left signals
@@ -258,15 +260,13 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
             <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Round {round} / 6</div>
           </div>
           <div className="flex items-center gap-2">
-            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-gold-500/30 bg-gold-950/20 px-3 py-1.5">
-              {currentPlayer && (
-                <img src={markerSrc(currentPlayer.classId)} alt={currentPlayer.name} className="w-8 h-8 rounded-full object-cover border border-gold-400/60" />
-              )}
-              <div>
-                <div className="text-[9px] uppercase tracking-widest text-gold-300 font-bold">Current Player</div>
-                <div className="text-sm font-display font-bold text-parchment-100 leading-tight">{currentPlayer?.name ?? '-'}</div>
-              </div>
-            </div>
+
+            <button
+              onClick={() => setShowCheatSheet(true)}
+              className="btn-secondary text-xs px-3 py-2"
+            >
+              Help Guide
+            </button>
             <button
               onClick={() => {
                 if (isOnline) {
@@ -555,6 +555,9 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
         )}
 
       </div>
+            {showCheatSheet && (
+        <CheatSheetModal onClose={() => setShowCheatSheet(false)} />
+      )}
     </div>
   )
 }
@@ -713,3 +716,4 @@ function markerSrc(classId: string) {
   const name = classId.charAt(0).toUpperCase() + classId.slice(1)
   return `/cards/tokens/${name}.png`
 }
+
