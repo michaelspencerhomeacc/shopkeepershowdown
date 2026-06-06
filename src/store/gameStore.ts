@@ -856,31 +856,41 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set(s => ({
       players: s.players.map(p => {
-        if (p.id !== playerId) {
-          if (displacedCounterfeitCard && p.id === rogueId) {
-            return { ...p, counterfeitHand: [...p.counterfeitHand, displacedCounterfeitCard] }
-          }
-          return p
-        }
+        if (p.id !== playerId) return p
+
+        const playerIsRogue = p.classId === 'rogue'
+
         const newWindows = p.windows.map((w, i) =>
           i === windowIdx ? { ...w, card, stolen: isStolen } : w
         )
-        // Bump displaced card back to hoard (preserve its stolen marker)
+
+        // If replacing a card in a window:
+        // - normal cards go back to hoard
+        // - displaced counterfeits go to hoard unless this player is the Rogue
+        // - Rogue's own displaced counterfeits go back to counterfeitHand
         const newHoard = existingCard
-          ? displacedCounterfeitCard ? p.hoard.filter(c => c.id !== cardId) : [...p.hoard.filter(c => c.id !== cardId), existingCard]
+          ? displacedCounterfeitCard
+            ? playerIsRogue
+              ? p.hoard.filter(c => c.id !== cardId)
+              : [...p.hoard.filter(c => c.id !== cardId), displacedCounterfeitCard]
+            : [...p.hoard.filter(c => c.id !== cardId), existingCard]
           : p.hoard.filter(c => c.id !== cardId)
+
         const newStolenIds = existingCard && existingStolen
           ? [...p.stolenHoardCardIds.filter(id => id !== cardId), existingCard.id]
           : p.stolenHoardCardIds.filter(id => id !== cardId)
+
         return {
           ...p,
           hoard: newHoard,
           counterfeitHand: [
             ...(placingCounterfeit ? p.counterfeitHand.filter(c => c.id !== cardId) : p.counterfeitHand),
-            ...(displacedCounterfeitCard && p.id === rogueId ? [displacedCounterfeitCard] : []),
+            ...(displacedCounterfeitCard && playerIsRogue ? [displacedCounterfeitCard] : []),
           ],
           windows: newWindows,
-          stolenHoardCardIds: displacedCounterfeitCard ? newStolenIds.filter(id => id !== displacedCounterfeitCard.id) : newStolenIds,
+          stolenHoardCardIds: displacedCounterfeitCard
+            ? newStolenIds.filter(id => id !== displacedCounterfeitCard.id)
+            : newStolenIds,
         }
       }),
     }))
