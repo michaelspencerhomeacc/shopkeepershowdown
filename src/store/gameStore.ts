@@ -207,6 +207,7 @@ function buildInitialGameState(players: Player[]): GameState {
     rogueShadowsPending: null,
     rogueShadowsPromptedForTurn: null,
     rogueCounterfeitEffectPending: null,
+    rogueCounterfeitEffectQueue: [],
     clashResult: null,
     barbarianClashOptOut: null,
     classAbilitiesUsedThisTurn: [],
@@ -252,6 +253,7 @@ interface GameStore extends GameState {
   setWindowStatus: (playerId: string, windowIdx: number, status: WindowStatus) => void
   setWindowStolen: (playerId: string, windowIdx: number, stolen: boolean) => void
   reorderHoard: (playerId: string, fromIdx: number, toIdx: number) => void
+  reorderCounterfeitHand: (playerId: string, fromIdx: number, toIdx: number) => void
   swapWindows: (playerId: string, fromIdx: number, toIdx: number) => void
 
   // Flea market
@@ -299,6 +301,9 @@ interface GameStore extends GameState {
   guildContacts: (rogueId: string, cardId: string, roll?: number) => void
   returnCounterfeitsToRogue: (cards: CounterfeitCard[], sourcePlayerId?: string, source?: string) => void
   clearRogueCounterfeitEffect: () => void
+  queueRogueCounterfeitEffect: (
+    effect: NonNullable<GameState['rogueCounterfeitEffectPending']>
+  ) => void
   breakWindow: (byPlayerId: string, targetPlayerId: string, windowIdx: number) => void
   fence: (playerId: string, cardId: string) => void
   launder: (playerId: string) => void
@@ -445,6 +450,8 @@ const INITIAL: GameState = {
   sellPhaseDone: false,
   rogueShadowsPending: null,
   rogueShadowsPromptedForTurn: null,
+  rogueCounterfeitEffectPending: null,
+  rogueCounterfeitEffectQueue: [],
   clashResult: null,
   barbarianClashOptOut: null,
   classAbilitiesUsedThisTurn: [],
@@ -849,73 +856,103 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set(s => ({
       players: s.players.map(p => {
-        if (p.id !== playerId) {
-          if (displacedCounterfeitCard && p.id === rogueId) {
-            return { ...p, counterfeitHand: [...p.counterfeitHand, displacedCounterfeitCard] }
-          }
-          return p
-        }
+        if (p.id !== playerId) return p
+
+        const playerIsRogue = p.classId === 'rogue'
+
         const newWindows = p.windows.map((w, i) =>
           i === windowIdx ? { ...w, card, stolen: isStolen } : w
         )
-        // Bump displaced card back to hoard (preserve its stolen marker)
+
+        // If replacing a card in a window:
+        // - normal cards go back to hoard
+        // - displaced counterfeits go to hoard unless this player is the Rogue
+        // - Rogue's own displaced counterfeits go back to counterfeitHand
         const newHoard = existingCard
-          ? displacedCounterfeitCard ? p.hoard.filter(c => c.id !== cardId) : [...p.hoard.filter(c => c.id !== cardId), existingCard]
+          ? displacedCounterfeitCard
+            ? playerIsRogue
+              ? p.hoard.filter(c => c.id !== cardId)
+              : [...p.hoard.filter(c => c.id !== cardId), displacedCounterfeitCard]
+            : [...p.hoard.filter(c => c.id !== cardId), existingCard]
           : p.hoard.filter(c => c.id !== cardId)
+
         const newStolenIds = existingCard && existingStolen
           ? [...p.stolenHoardCardIds.filter(id => id !== cardId), existingCard.id]
           : p.stolenHoardCardIds.filter(id => id !== cardId)
+
         return {
           ...p,
           hoard: newHoard,
           counterfeitHand: [
             ...(placingCounterfeit ? p.counterfeitHand.filter(c => c.id !== cardId) : p.counterfeitHand),
-            ...(displacedCounterfeitCard && p.id === rogueId ? [displacedCounterfeitCard] : []),
+            ...(displacedCounterfeitCard && playerIsRogue ? [displacedCounterfeitCard] : []),
           ],
           windows: newWindows,
-          stolenHoardCardIds: displacedCounterfeitCard ? newStolenIds.filter(id => id !== displacedCounterfeitCard.id) : newStolenIds,
+          stolenHoardCardIds: displacedCounterfeitCard
+            ? newStolenIds.filter(id => id !== displacedCounterfeitCard.id)
+            : newStolenIds,
         }
       }),
     }))
   },
 
-  moveFromWindowToHoard(playerId, windowIdx) {
+    moveFromWindowToHoard(playerId, windowIdx) {
     const { players } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
+
     const card = player.windows[windowIdx]?.card
     if (!card) return
+
     const movingCounterfeit = isCounterfeitCard(card)
-    const rogueId = players.find(p => p.classId === 'rogue')?.id
+    const playerIsRogue = player.classId === 'rogue'
 
     set(s => ({
       players: s.players.map(p => {
-        if (p.id === playerId) {
-          const win = p.windows[windowIdx]
-          const newWindows = p.windows.map((w, i) =>
-            i === windowIdx ? { ...w, card: null, stolen: false } : w
-          )
-          if (movingCounterfeit) {
-            return {
-              ...p,
-              windows: newWindows,
-              counterfeitHand: p.id === rogueId ? [...p.counterfeitHand, card] : p.counterfeitHand,
-            }
+        if (p.id !== playerId) return p
+
+        const win = p.windows[windowIdx]
+
+        const newWindows = p.windows.map((w, i) =>
+          i === windowIdx ? { ...w, card: null, stolen: false } : w
+        )
+
+        // Rule:
+        // - Rogue moving their own counterfeit out of a window returns it to counterfeitHand.
+        // - Any non-Rogue moving a counterfeit out of their window keeps it in hoard.
+        if (movingCounterfeit) {
+          return {
+            ...p,
+            windows: newWindows,
+            hoard: playerIsRogue ? p.hoard : [...p.hoard, card],
+            counterfeitHand: playerIsRogue ? [...p.counterfeitHand, card] : p.counterfeitHand,
           }
-          // If window was stolen, carry the stolen marker to hoard
-          const newStolenIds = win?.stolen
-            ? [...p.stolenHoardCardIds, card.id]
-            : p.stolenHoardCardIds
-          return { ...p, windows: newWindows, hoard: [...p.hoard, card], stolenHoardCardIds: newStolenIds }
         }
-        if (movingCounterfeit && rogueId && p.id === rogueId) {
-          return { ...p, counterfeitHand: [...p.counterfeitHand, card] }
+
+        // If window was stolen, carry the stolen marker to hoard
+        const newStolenIds = win?.stolen
+          ? [...p.stolenHoardCardIds, card.id]
+          : p.stolenHoardCardIds
+
+        return {
+          ...p,
+          windows: newWindows,
+          hoard: [...p.hoard, card],
+          stolenHoardCardIds: newStolenIds,
         }
-        return p
       }),
-      actionLog: movingCounterfeit
-        ? [logEntry(`${player.name} moved ${card.name} out of a window — it returned to the Rogue's hand.`, playerId), ...s.actionLog.slice(0, 49)]
-        : s.actionLog,
+
+      actionLog: [
+        logEntry(
+          movingCounterfeit
+            ? playerIsRogue
+              ? `${player.name} moved ${card.name} out of a window — it returned to their Counterfeit hand.`
+              : `${player.name} moved ${card.name} out of a window — it moved to their hoard.`
+            : `${player.name} moved ${card.name} from a window to their hoard.`,
+          playerId
+        ),
+        ...s.actionLog.slice(0, 49),
+      ],
     }))
   },
 
@@ -927,6 +964,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
         const [moved] = newHoard.splice(fromIdx, 1)
         newHoard.splice(toIdx, 0, moved)
         return { ...p, hoard: newHoard }
+      }),
+    }))
+  },
+
+  reorderCounterfeitHand(playerId, fromIdx, toIdx) {
+    if (fromIdx === toIdx) return
+
+    set(s => ({
+      players: s.players.map(p => {
+        if (p.id !== playerId) return p
+
+        const newCounterfeitHand = [...p.counterfeitHand]
+        const [moved] = newCounterfeitHand.splice(fromIdx, 1)
+
+        if (!moved) return p
+
+        newCounterfeitHand.splice(toIdx, 0, moved)
+
+        return {
+          ...p,
+          counterfeitHand: newCounterfeitHand,
+        }
       }),
     }))
   },
@@ -1824,16 +1883,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
           players: s.players.map(p => p.id === rogueId ? { ...p, activeTokens: Math.min(2, p.activeTokens + effect.amount) } : p),
           actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — refreshed ${effect.amount} active token${effect.amount !== 1 ? 's' : ''}.`, rogueId), ...s.actionLog.slice(0, 49)],
         }))
-      } else if (effect.kind === 'steal' || effect.kind === 'trade' || effect.kind === 'auction' || effect.kind === 'break') {
+      } else if (
+        effect.kind === 'steal' ||
+        effect.kind === 'trade' ||
+        effect.kind === 'auction' ||
+        effect.kind === 'break'
+      ) {
+        get().queueRogueCounterfeitEffect({
+          rogueId,
+          cardName: card.name,
+          cardImageFile: card.imageFile,
+          effect,
+          source,
+        })
+
         set(s => ({
-          rogueCounterfeitEffectPending: {
-            rogueId,
-            cardName: card.name,
-            cardImageFile: card.imageFile,
-            effect,
-            source,
-          },
-          actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — ${effect.kind} ${effect.amount} is ready to resolve.`, rogueId), ...s.actionLog.slice(0, 49)],
+          actionLog: [
+            logEntry(
+              `${rogue.name}'s ${card.name} returned — ${effect.kind} ${effect.amount} is queued to resolve.`,
+              rogueId
+            ),
+            ...s.actionLog.slice(0, 49),
+          ],
         }))
       } else {
         set(s => ({
@@ -1844,7 +1915,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   clearRogueCounterfeitEffect() {
-    set({ rogueCounterfeitEffectPending: null })
+    set(s => {
+      const [next, ...rest] = s.rogueCounterfeitEffectQueue
+
+      return {
+        rogueCounterfeitEffectPending: next ?? null,
+        rogueCounterfeitEffectQueue: rest,
+      }
+    })
+  },
+
+  queueRogueCounterfeitEffect(effect) {
+    set(s => {
+      if (!effect) return {}
+
+      if (!s.rogueCounterfeitEffectPending) {
+        return {
+          rogueCounterfeitEffectPending: effect,
+        }
+      }
+
+      return {
+        rogueCounterfeitEffectQueue: [
+          ...s.rogueCounterfeitEffectQueue,
+          effect,
+        ],
+      }
+    })
   },
 
   breakWindow(byPlayerId, targetPlayerId, windowIdx) {
@@ -2098,17 +2195,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!player || !player.workOrder) return
 
     const cardIdSet = new Set(cardIds)
-    // Cards can come from hoard or windows
-    const fromHoard = player.hoard.filter(c => cardIdSet.has(c.id))
-    const fromWindows = player.windows.flatMap(w => (w.card && cardIdSet.has(w.card.id) ? [w.card] : []))
-    const spentCards = [...fromHoard, ...fromWindows]
-    const discardedCards = spentCards.filter(c => !isCounterfeitCard(c))
-    const removedCounterfeitCount = spentCards.length - discardedCards.length
-    const baseGain = player.workOrder.price
-    // Forge of Ironpeak (rn02) passive: +3 bonus coins on craft completion
-    const rn02Bonus = player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn02') ? 3 : 0
-    const gained = baseGain + rn02Bonus
 
+    // Cards can come from hoard, windows, or Rogue's drawn counterfeit hand
+    const fromHoard = player.hoard.filter(c => cardIdSet.has(c.id))
+
+    const fromWindows = player.windows.flatMap(w =>
+      w.card && cardIdSet.has(w.card.id) ? [w.card] : []
+    )
+
+    const fromCounterfeitHand =
+      player.classId === 'rogue'
+        ? player.counterfeitHand.filter(c => cardIdSet.has(c.id))
+        : []
+
+    const spentCards = [
+      ...fromHoard,
+      ...fromWindows,
+      ...fromCounterfeitHand,
+    ]
+
+    const counterfeitCards = spentCards.filter(isCounterfeitCard)
+    const discardedCards = spentCards.filter(c => !isCounterfeitCard(c))
+    const removedCounterfeitCount = counterfeitCards.length
+
+    const baseGain = player.workOrder.price
+
+    // Forge of Ironpeak (rn02) passive: +3 bonus coins on craft completion
+    const rn02Bonus =
+      player.classId === 'paladin' && player.renownCards.some(c => c.id === 'rn02')
+        ? 3
+        : 0
+
+    const gained = baseGain + rn02Bonus
     const discountUsed = player.craftDiscount > 0
 
     set(s => ({
@@ -2120,10 +2238,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
               workOrder: null,
               craftDiscount: 0,
               coins: p.coins + gained,
+
+              // Remove spent normal cards from hoard
               hoard: p.hoard.filter(c => !cardIdSet.has(c.id)),
+
+              // Remove spent drawn counterfeits from Rogue's hand
+              counterfeitHand: p.counterfeitHand.filter(c => !cardIdSet.has(c.id)),
+
               stolenHoardCardIds: p.stolenHoardCardIds.filter(id => !cardIdSet.has(id)),
+
+              // Remove spent window cards
               windows: p.windows.map(w =>
-                w.card && cardIdSet.has(w.card.id) ? { ...w, card: null } : w
+                w.card && cardIdSet.has(w.card.id)
+                  ? { ...w, card: null, stolen: false }
+                  : w
               ),
             }
           : p
@@ -2132,10 +2260,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
         `${player.name} completed Work Order "${player.workOrder!.name}" — spent ${spentCards.length} cards, gained ${gained} coins.` +
         (discountUsed ? ' (Forge of Ironpeak discount applied)' : '') +
         (rn02Bonus > 0 ? ` ◆ Forge of Ironpeak — +${rn02Bonus} bonus coins.` : '') +
-        (removedCounterfeitCount > 0 ? ` ${removedCounterfeitCount} Counterfeit card${removedCounterfeitCount !== 1 ? 's were' : ' was'} removed from play.` : ''),
+        (removedCounterfeitCount > 0
+          ? ` ${removedCounterfeitCount} Counterfeit card${removedCounterfeitCount !== 1 ? 's were' : ' was'} returned to the Rogue.`
+          : ''),
         playerId
       ), ...s.actionLog.slice(0, 49)],
     }))
+
+    if (counterfeitCards.length > 0) {
+      get().returnCounterfeitsToRogue(counterfeitCards, playerId, 'crafted')
+    }
   },
 
   pitchCamp(playerId) {
@@ -3802,9 +3936,29 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   advanceFinalSell() {
-    const { endgame, players } = get()
+    const {
+      endgame,
+      players,
+      rogueCounterfeitEffectPending,
+      rogueCounterfeitEffectQueue,
+      diceResult,
+      rn04RerollPending,
+      trickShotPending,
+    } = get()
+
     if (!endgame || endgame.phase !== 'final-sell') return
+
+    if (
+      rogueCounterfeitEffectPending ||
+      rogueCounterfeitEffectQueue.length > 0 ||
+      rn04RerollPending ||
+      trickShotPending
+    ) {
+      return
+    }
+
     const remaining = endgame.playerQueue.slice(1)
+
     if (remaining.length === 0) {
       set({ endgame: { phase: 'scoring' } })
     } else {

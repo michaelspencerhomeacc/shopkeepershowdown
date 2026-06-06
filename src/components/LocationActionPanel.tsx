@@ -1805,7 +1805,17 @@ function CraftCardPicker({ player, onDone, onBack }: { player: Player; onDone: (
     .filter(w => w.card !== null && w.status !== 'broken')
     .map(w => w.card!)
 
-  const allAvailable = [...player.hoard, ...windowCards]
+  const drawnCounterfeits =
+    player.classId === 'rogue'
+      ? player.counterfeitHand
+      : []
+
+  const allAvailable = [
+    ...player.hoard,
+    ...windowCards,
+    ...drawnCounterfeits,
+  ]
+
   const selectedCards = selected.map(id => allAvailable.find(c => c.id === id)).filter(Boolean) as ResourceCard[]
   const selectedValue = selectedCards.reduce((sum, c) => sum + c.value, 0)
 
@@ -1859,6 +1869,21 @@ function CraftCardPicker({ player, onDone, onBack }: { player: Player; onDone: (
           <div className="flex flex-wrap gap-2">
             {windowCards.map(c => (
               <ResourceCardMini key={c.id} card={c} size="lg" selected={selected.includes(c.id)} onClick={() => toggle(c.id)} />
+            ))}
+          </div>
+        </>
+      )}
+      {drawnCounterfeits.length > 0 && (
+        <>
+          <SectionTitle>Drawn Counterfeits:</SectionTitle>
+          <div className="flex flex-wrap gap-1.5">
+            {drawnCounterfeits.map(c => (
+              <ResourceCardMini
+                key={c.id}
+                card={c}
+                selected={selected.includes(c.id)}
+                onClick={() => toggle(c.id)}
+              />
             ))}
           </div>
         </>
