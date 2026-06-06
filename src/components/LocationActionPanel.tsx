@@ -77,7 +77,7 @@ export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
   tavern: [
     { id: 'refresh', label: 'Refresh Actives', icon: '🔄', description: 'Reset all your active tokens to ready.' },
     { id: 'auction', label: 'Auction 1',        icon: '🔨', description: 'Roll to sell a card from your hoard or a window.' },
-    { id: 'trade',   label: 'Trade 2',          icon: '↔️',  description: 'Swap up to 2 cards with the Flea Market.' },
+    { id: 'trade',   label: 'Trade 3',          icon: '↔️',  description: 'Swap up to 3 cards with the Flea Market.' },
   ],
   wilderness: [
     { id: 'gather',     label: 'Gather',     icon: '🎲', description: 'Roll d6 and draw that many resource cards.' },
@@ -87,7 +87,7 @@ export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
   barracks: [
     { id: 'report',     label: 'Report the Crime', icon: '⚖️', description: 'Repair windows or report theft for Reputation.' },
     { id: 'bodyguard',  label: 'Hire Bodyguard',   icon: '🛡️', description: 'Pay 2 coins for the Night Watcher token.' },
-    { id: 'town-crier', label: 'Town Crier',        icon: '📯', description: 'Peek at upcoming Visitors.' },
+    { id: 'town-crier', label: 'Town Crier',        icon: '📯', description: 'Peek at upcoming Visitors and replace any.' },
   ],
   workshop: [
     { id: 'take-2',   label: 'Take 2',     icon: '🛒', description: 'Take up to 2 cards from the Flea Market.' },
@@ -95,9 +95,9 @@ export const LOCATION_ACTIONS: Record<Location, ActionOption[]> = {
     { id: 'appraise', label: 'Appraise 2', icon: '🔍', description: 'Peek at 4 resource cards, keep up to 2.' },
   ],
   'thieves-guild': [
-    { id: 'steal-or-break', label: 'Steal 1 or Break 1', icon: '🗡️', description: "Target another player's window." },
+    { id: 'steal-or-break', label: 'Steal 1 or Break 1', icon: '🗡️', description: "Target another player's window or resources." },
     { id: 'fence',          label: 'Fence',               icon: '💎', description: 'Secretly sell a stolen resource.' },
-    { id: 'launder',        label: 'Launder 2',           icon: '🌀', description: 'Convert 2 stolen cards into coins and Reputation.' },
+    { id: 'launder',        label: 'Launder 3',           icon: '🌀', description: 'Draw 3 cards and markt hem as stolen.' },
   ],
 }
 
@@ -998,13 +998,13 @@ function TavernActions({ actionId, onAction, onBack }: { actionId: string; onAct
 
   function toggleHoardCard(id: string) {
     setSelectedHoardIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 2 ? [...prev, id] : prev
+      prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 3 ? [...prev, id] : prev
     )
   }
 
   function toggleFleaSlot(idx: number) {
     setSelectedFleaIdxs(prev =>
-      prev.includes(idx) ? prev.filter(x => x !== idx) : prev.length < 2 ? [...prev, idx] : prev
+      prev.includes(idx) ? prev.filter(x => x !== idx) : prev.length < 3 ? [...prev, idx] : prev
     )
   }
 
@@ -1116,7 +1116,7 @@ function TavernActions({ actionId, onAction, onBack }: { actionId: string; onAct
         <BackButton onBack={onBack} />
         {(player.hoard.length > 0 || player.windows.some(w => w.card && w.status !== 'broken')) && (
           <>
-            <div className="text-[10px] text-parchment-500 mb-1">Your cards — select up to 2:</div>
+            <div className="text-[10px] text-parchment-500 mb-1">Your cards — select up to 3:</div>
             <div className="flex flex-wrap gap-1.5 mb-2">
               {player.hoard.map(c => (
                 <ResourceCardMini key={c.id} card={c} size="lg"
@@ -2198,8 +2198,8 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
   if (actionId === 'launder') {
     return (
       <ConfirmActionBlock
-        description="Draw 2 stolen cards from the discard into your hoard."
-        confirmLabel="Launder 2"
+        description="Draw 3 resource cards and mark them as stolen."
+        confirmLabel="Launder 3"
         onConfirm={() => { launder(player.id); onAction() }}
         onBack={onBack}
       />

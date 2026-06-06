@@ -976,8 +976,8 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
 
       {/* Turn banner */}
       <div className={`panel px-3 py-2 flex items-center justify-between gap-3 border-2 ${currentTheme.border}`}>
-        <div className="flex items-center gap-3 min-w-0">
-          {false && currentPlayer && (
+        <div className="flex items-center gap-3 min-w-0 justify-self-start">
+          {currentPlayer && (
             <img
               src={markerSrc(currentPlayer.classId)}
               alt={currentPlayer.name}
@@ -986,11 +986,13 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
           )}
           <div>
             <div className={`text-[10px] uppercase tracking-widest font-bold ${currentTheme.text}`}>Current Turn</div>
-            <div className="text-lg font-display font-bold text-parchment-100">
+            <div className="text-xl font-display font-bold text-parchment-100">
               {currentPlayer?.name ?? '—'}
             </div>
           </div>
-          <div className="hidden">
+        </div>
+          <div className="flex items-center justify-center gap-3 justify-self-center">
+          <div className="flex items-center justify-center gap-3">
             <div className="text-xl font-display font-bold text-gold-300 tabular-nums">{actionsLeft}/{maxActions}</div>
             <div className="flex gap-1.5 items-center">
             {Array.from({ length: maxActions }, (_, i) => (
@@ -1005,7 +1007,7 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
               />
             ))}
             </div>
-            <span className="text-xs text-parchment-500">actions left</span>
+            <span className="text-medium text-parchment-500">Actions Left</span>
           </div>
           {round >= 2 && !sellPhaseDone && canAct && (
             <button
@@ -1023,24 +1025,26 @@ export function SharedBoard({ canAct = true, localPlayerName }: SharedBoardProps
             </button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setShowCheatSheet(true)}
-          className="text-xs bg-ink-800 hover:bg-ink-700 border border-parchment-700/40 text-parchment-300 px-3 py-1.5 rounded-lg transition-colors"
-        >
-          ? Guide
-        </button>
-        {false && canAct && (
+        <div className="justify-self-end">
+        {canAct && (
           <button
             onClick={() => {
-              const emptyNormal = currentPlayer?.windows.some(w => w.status === 'normal' && !w.card) ?? false
-              if (emptyNormal) { setShowEmptyWindowsWarn(true) } else { setSelectedLocation(null); endTurn() }
+                const emptyNormal = currentPlayer?.windows.some(w => w.status === 'normal' && !w.card) ?? false
+
+                if (emptyNormal) {
+                  setShowEmptyWindowsWarn(true)
+                } else {
+                  setSelectedLocation(null)
+                  endTurn()
+                }
             }}
             className="btn-primary text-xs px-3 py-1.5 font-semibold"
           >
             End Turn →
           </button>
         )}
+        </div>
+
         {false && !canAct && (
           <div className="text-xs text-parchment-600 italic px-3 py-1.5">
             {players.find(p => p.id === currentTurnPlayerId)?.name ?? '...'}'s turn
@@ -2661,92 +2665,6 @@ function ClanTollModal({
         </div>
       </div>
     </div>
-  )
-}
-
-// ---- In-game Cheat Sheet ----
-
-function CheatSheetModal({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[520] flex items-center justify-center bg-black/70 p-3">
-      <div className="bg-ink-900 border-2 border-gold-500/50 rounded-xl shadow-2xl w-full max-w-3xl max-h-[86vh] overflow-y-auto">
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 bg-ink-900 border-b border-gold-700/30 px-4 py-3">
-          <div>
-            <div className="text-[10px] uppercase tracking-widest text-gold-400 font-semibold">Quick Reference</div>
-            <div className="font-display font-bold text-parchment-100 text-lg">Shopkeeper Showdown Guide</div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-parchment-500 hover:text-parchment-100 text-2xl leading-none px-1"
-            title="Close guide"
-          >
-            x
-          </button>
-        </div>
-
-        <div className="p-4 grid md:grid-cols-2 gap-3 text-sm text-parchment-300">
-          <GuideSection title="Aim Of The Game">
-            <p>Build the best shop by collecting resources, placing them in windows, completing Visitor and Work Order sales, and scoring coins plus Reputation.</p>
-            <p>Reputation scores by type, and balanced sets are valuable at the end. Coins still matter, but a strong rep spread can swing the game.</p>
-          </GuideSection>
-
-          <GuideSection title="On Your Turn">
-            <ul className="space-y-1">
-              <li>From round 2 onward, resolve your Sell Phase first if visitors can buy from your windows.</li>
-              <li>You normally have 3 actions. Pick town locations to gather, trade, repair, steal, craft, or use Guild options.</li>
-              <li>Each location can usually be used once per turn. Class abilities may spend active tokens or happen off-turn.</li>
-              <li>End your turn only after checking your usable windows and hoard limit.</li>
-            </ul>
-          </GuideSection>
-
-          <GuideSection title="Setting Up Windows">
-            <ul className="space-y-1">
-              <li>Put resources in open windows so visitors can buy them during Sell Phase.</li>
-              <li>Try to cover active Visitor needs: ARM, CON, TRI, TRG, or ANY.</li>
-              <li>Cards in windows are visible and useful, but they can be stolen, broken, or disrupted.</li>
-              <li>Empty open windows cannot sell, so fill them before ending if you can.</li>
-            </ul>
-          </GuideSection>
-
-          <GuideSection title="What To Look For">
-            <ul className="space-y-1">
-              <li>Visitor demand: match the symbols they still need.</li>
-              <li>Card value: higher values pay more coins when sold.</li>
-              <li>Star rep: cards with rep icons give bonus rep when sold.</li>
-              <li>Work Order recipes: save the right resource types if a big craft payout is close.</li>
-            </ul>
-          </GuideSection>
-
-          <GuideSection title="Useful Reminders">
-            <ul className="space-y-1">
-              <li>Hoard limit is 8 cards. If you go over, you must discard or place cards into windows.</li>
-              <li>Broken windows do not sell until repaired.</li>
-              <li>Shuttered windows are temporarily closed and cannot receive normal sales.</li>
-              <li>The Flea Market is often the fastest way to fix a missing resource type.</li>
-            </ul>
-          </GuideSection>
-
-          <GuideSection title="Simple First Plan">
-            <ol className="space-y-1 list-decimal list-inside">
-              <li>Check visitors.</li>
-              <li>Fill windows with matching resources.</li>
-              <li>Use actions to patch gaps or build toward your Work Order.</li>
-              <li>End with windows filled and your hoard under control.</li>
-            </ol>
-          </GuideSection>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function GuideSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-lg border border-parchment-800/40 bg-ink-800/50 p-3 space-y-2">
-      <h4 className="text-gold-300 font-display font-bold text-base leading-tight">{title}</h4>
-      <div className="space-y-2 leading-relaxed">{children}</div>
-    </section>
   )
 }
 
