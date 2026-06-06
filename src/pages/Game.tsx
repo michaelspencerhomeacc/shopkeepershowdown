@@ -1,15 +1,73 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useGameStore } from '../store/gameStore'
 import { PlayerArea } from '../components/PlayerArea'
 import { SharedBoard } from '../components/SharedBoard'
 import { ActionLog } from '../components/ActionLog'
-import { OpponentSidebar } from '../components/OpponentSidebar'
 import { CLASSES } from '../data/classes'
 import { supabase } from '../lib/supabase'
 import { abandonRoom } from '../lib/rooms'
 import type { Player, ResourceCard } from '../types'
 
 const PAWN_COLORS = ['bg-red-500','bg-blue-500','bg-green-500','bg-yellow-400','bg-purple-500','bg-pink-500']
+const PAWN_COLOR_HEX = ['#ef4444', '#3b82f6', '#22c55e', '#facc15', '#a855f7', '#ec4899']
+const CLASS_ACCENTS: Record<string, string> = {
+  barbarian: '#8a0630',
+  ranger: '#1f7a1a',
+  paladin: '#ec6fb4',
+  shaman: '#2f7ec3',
+  rogue: '#6b7280',
+  monk: '#d9a326',
+  warlock: '#7e22ce',
+  sorcerer: '#f97316',
+}
+const CLASS_PANEL_TINTS: Record<string, string> = {
+  barbarian: 'rgba(138, 6, 48, 0.55)',
+  ranger: 'rgba(31, 122, 26, 0.55)',
+  paladin: 'rgba(236, 111, 180, 0.55)',
+  shaman: 'rgba(47, 126, 195, 0.55)',
+  rogue: 'rgba(107, 114, 128, 0.55)',
+  monk: 'rgba(217, 163, 38, 0.55)',
+  warlock: 'rgba(126, 34, 206, 0.55)',
+  sorcerer: 'rgba(249, 115, 22, 0.55)',
+}
+const REP_STATUS_TOKENS = [
+  { key: 'ARM' as const, image: '/cards/tokens/Armament Reputation Token.png', color: '#f97316' },
+  { key: 'CON' as const, image: '/cards/tokens/Consumable Reputation Token.png', color: '#3b82f6' },
+  { key: 'TRG' as const, image: '/cards/tokens/Trade Good Reputation Token.png', color: '#ec4899' },
+  { key: 'TRI' as const, image: '/cards/tokens/Trinket Reputation Token.png', color: '#1f7a1a' },
+]
+const HOARD_STATUS_TOKENS = [
+  { key: 'ARM' as const, label: 'ARM', className: 'border-orange-300/80 bg-orange-600 text-white' },
+  { key: 'CON' as const, label: 'CON', className: 'border-blue-300/80 bg-blue-600 text-white' },
+  { key: 'TRG' as const, label: 'TRG', className: 'border-pink-300/80 bg-pink-600 text-white' },
+  { key: 'TRI' as const, label: 'TRI', className: 'border-green-300/80 bg-green-600 text-white' },
+]
+const WINDOW_STATUS_STYLE: Record<string, string> = {
+  ARM: 'border-orange-400/80 bg-orange-600 text-white',
+  CON: 'border-blue-400/80 bg-blue-600 text-white',
+  TRI: 'border-green-400/80 bg-green-600 text-white',
+  TRG: 'border-pink-400/80 bg-pink-600 text-white',
+}
+const REP_SCORE_TABLE = [0, 1, 3, 5, 8, 11, 14, 18, 22]
+
+function repScore(tokens: number) {
+  return REP_SCORE_TABLE[Math.min(tokens, REP_SCORE_TABLE.length - 1)]
+}
+
+function liveScore(player: Player) {
+  const coins = player.coins + (player.classId === 'monk' ? player.momentumTokens : 0)
+  const repPoints = repScore(player.rep.ARM) + repScore(player.rep.CON) + repScore(player.rep.TRI) + repScore(player.rep.TRG)
+  const sets = Math.min(player.rep.ARM, player.rep.CON, player.rep.TRI, player.rep.TRG)
+  return coins + repPoints + sets * 6
+}
+
+function classStatus(player: Player) {
+  if (player.classId === 'paladin') return `Renown ${player.renownCards.length}`
+  if (player.classId === 'rogue') return `CF ${player.counterfeitHand.length}`
+  if (player.classId === 'ranger') return `Ambushes ${player.ambushesPlaced.length}/3`
+  return null
+}
 
 interface Props {
   /** Name of the local player — used in online mode to lock other players' areas.
@@ -23,7 +81,7 @@ interface Props {
 
 export function Game({ localPlayerName, roomId, onLeave }: Props) {
   const {
-    players, round, nextRound, resetGame, activePlayerId, setActivePlayer,
+    players, round, resetGame,
     currentTurnPlayerId, startingDraft, completeStartingDraftPick,
   } = useGameStore()
 
@@ -31,16 +89,32 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
 
   const localPlayer = localPlayerName ? players.find(p => p.name === localPlayerName) : null
   const isMyTurn = !localPlayerName || (localPlayer?.id === currentTurnPlayerId)
-  const opponents = localPlayer
-    ? players
-        .map((p, i) => ({ player: p, index: i }))
-        .filter(({ player }) => player.id !== localPlayer.id)
-    : []
-
+  const currentPlayer = players.find(p => p.id === currentTurnPlayerId) ?? players[0]
   const [viewingPlayerId, setViewingPlayerId] = useState<string | null>(null)
+  const [hoveredTopWindowCard, setHoveredTopWindowCard] = useState<{ name: string; imageFile: string; x: number; y: number } | null>(null)
   const centrePlayer = viewingPlayerId ? players.find(p => p.id === viewingPlayerId) : localPlayer
   const centreIndex = centrePlayer ? players.indexOf(centrePlayer) : 0
   const viewingOpponent = viewingPlayerId !== null
+  const topWindowPreviewLeft = hoveredTopWindowCard && typeof window !== 'undefined'
+    ? Math.min(hoveredTopWindowCard.x + 18, window.innerWidth - 210)
+    : 0
+  const topWindowPreviewTop = hoveredTopWindowCard && typeof window !== 'undefined'
+    ? Math.min(Math.max(hoveredTopWindowCard.y - 140, 8), window.innerHeight - 304)
+    : 0
+  const topWindowCardPreview = hoveredTopWindowCard && typeof document !== 'undefined'
+    ? createPortal(
+      <div
+        className="fixed pointer-events-none w-[190px] rounded-xl border-2 border-gold-400/70 bg-ink-950 p-2 shadow-2xl shadow-black/80"
+        style={{ zIndex: 2147483647, left: topWindowPreviewLeft, top: topWindowPreviewTop }}
+      >
+        <div className="h-[266px] w-full overflow-hidden rounded-lg border border-parchment-800/40 bg-black/40">
+          <img src={hoveredTopWindowCard.imageFile} alt={hoveredTopWindowCard.name} className="h-full w-full object-contain" />
+        </div>
+        <div className="mt-1 truncate text-center text-xs font-semibold text-gold-200">{hoveredTopWindowCard.name}</div>
+      </div>,
+      document.body
+    )
+    : null
 
   // Online-mode leave flow
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false)
@@ -142,6 +216,7 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
 
   return (
     <div className="min-h-screen p-2 space-y-2">
+      {topWindowCardPreview}
       {/* Leave confirmation modal (online only) */}
       {showLeaveConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
@@ -173,8 +248,228 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
         </div>
       )}
 
-      {/* Top bar */}
-      <div className="flex items-center justify-between panel px-4 py-1.5">
+      {/* Top menu */}
+      <div className="panel px-3 py-2">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="min-w-0">
+            <h1 className="font-display font-bold text-gold-400 text-lg tracking-wide leading-tight">
+              Shopkeeper Showdown
+            </h1>
+            <div className="text-[10px] uppercase tracking-widest text-parchment-500 font-bold">Round {round} / 6</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-gold-500/30 bg-gold-950/20 px-3 py-1.5">
+              {currentPlayer && (
+                <img src={markerSrc(currentPlayer.classId)} alt={currentPlayer.name} className="w-8 h-8 rounded-full object-cover border border-gold-400/60" />
+              )}
+              <div>
+                <div className="text-[9px] uppercase tracking-widest text-gold-300 font-bold">Current Player</div>
+                <div className="text-sm font-display font-bold text-parchment-100 leading-tight">{currentPlayer?.name ?? '-'}</div>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (isOnline) {
+                  setShowLeaveConfirm(true)
+                } else {
+                  if (confirm('End the game and return to lobby?')) {
+                    resetGame()
+                    onLeave?.()
+                  }
+                }
+              }}
+              className="btn-secondary text-xs px-3 py-2"
+            >
+              Lobby
+            </button>
+          </div>
+        </div>
+
+        <div className="flex gap-3 overflow-x-auto pb-1">
+          {players.map((p, i) => {
+            const isCurrent = p.id === currentTurnPlayerId
+            const isViewingThisPlayer = !!localPlayer && (p.id === localPlayer.id ? viewingPlayerId === null : viewingPlayerId === p.id)
+            const classAccent = CLASS_ACCENTS[p.classId] ?? '#d4901e'
+            const classTint = CLASS_PANEL_TINTS[p.classId] ?? 'rgba(212, 144, 30, 0.32)'
+            const playerColor = PAWN_COLOR_HEX[i % PAWN_COLOR_HEX.length]
+            const extraStatus = classStatus(p)
+            return (
+              <div key={p.id} className="relative flex-shrink-0 pt-5">
+                {isViewingThisPlayer && (
+                  <div className="absolute left-1/2 top-0 z-20 -translate-x-1/2 rounded-t-md border border-b-0 border-sky-200/90 bg-sky-300/95 px-3 py-1 text-[9px] font-black uppercase tracking-wide text-ink-950 shadow">
+                    Viewing
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!localPlayer) return
+                    setViewingPlayerId(p.id === localPlayer.id ? null : p.id)
+                  }}
+                  disabled={!localPlayer}
+                  className={`relative min-w-[270px] rounded-lg border px-3 py-2.5 bg-ink-950/55 overflow-hidden text-left transition-all ${
+                    localPlayer ? 'cursor-pointer hover:brightness-110 active:scale-[0.99]' : 'cursor-default'
+                  } ${
+                    isViewingThisPlayer ? 'ring-2 ring-sky-200/95' : ''
+                  } ${
+                    isCurrent ? 'border-gold-400/80 shadow-lg shadow-gold-900/25' : 'border-parchment-800/35'
+                  }`}
+                  style={{
+                    borderColor: isViewingThisPlayer ? '#bae6fd' : isCurrent ? '#22c55e' : classAccent,
+                    borderTopColor: playerColor,
+                    borderTopWidth: 4,
+                    background: classTint,
+                    boxShadow: isViewingThisPlayer ? `0 0 20px rgba(125,211,252,0.36)` : isCurrent ? `0 0 18px rgba(34,197,94,0.42)` : undefined,
+                  }}
+                >
+                <div className="relative grid grid-cols-[72px_1fr_72px] items-start gap-3">
+                  <div className="rounded-md bg-black/20 border border-white/10 px-2.5 py-2 min-h-[86px] flex flex-col justify-between gap-1.5">
+                    <div className="flex items-center justify-center gap-1">
+                      <div className="w-7 h-7 rounded-full overflow-hidden border border-gold-300/60 bg-gold-950/40">
+                        <img src="/cards/tokens/10 Coin Back.png" alt="Coins" className="w-full h-full object-cover" />
+                      </div>
+                      <div className="text-xl font-display font-bold text-gold-100 tabular-nums leading-none">{p.coins}</div>
+                    </div>
+                    {extraStatus && (
+                      <div className="truncate text-center text-[11px] font-bold leading-tight text-white/95">{extraStatus}</div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-center min-w-0">
+                    <div className="relative">
+                      {isCurrent && (
+                        <>
+                          <div className="absolute inset-[-6px] rounded-full animate-ping bg-green-400/45" />
+                          <div className="absolute inset-[-6px] rounded-full border-2 border-green-300/90 shadow-[0_0_14px_rgba(34,197,94,0.7)]" />
+                        </>
+                      )}
+                      {isViewingThisPlayer && !isCurrent && (
+                        <div className="absolute inset-[-5px] rounded-full border-2 border-sky-200/95 shadow-[0_0_12px_rgba(125,211,252,0.7)]" />
+                      )}
+                      <div
+                        className="relative w-[72px] h-[72px] rounded-full p-[7px] shadow-lg"
+                        style={{ background: isCurrent ? '#22c55e' : classAccent }}
+                      >
+                      <img src={markerSrc(p.classId)} alt={p.name} className="w-full h-full rounded-full object-cover border-2 border-ink-950" />
+                      </div>
+                    </div>
+                    <div className="mt-2 max-w-[120px] truncate text-center text-base font-display font-bold text-white leading-tight drop-shadow">{p.name}</div>
+                    <div className="max-w-[120px] truncate text-center text-[10px] font-bold text-white/80">
+                      {CLASSES.find(c => c.id === p.classId)?.name ?? p.classId}
+                    </div>
+                  </div>
+
+                  <div className="rounded-md bg-black/20 border border-white/10 px-2 py-1.5 min-h-[74px] flex flex-col items-center justify-center gap-1">
+                    <div className="text-[10px] font-bold text-white/85">{p.classId === 'monk' ? 'Momentum' : 'Active'}</div>
+                    <div className="flex flex-wrap justify-center gap-1">
+                      {Array.from({ length: p.classId === 'monk' ? Math.max(1, Math.min(4, p.momentumTokens || 1)) : 2 }, (_, idx) => {
+                        const activeValue = p.classId === 'monk' ? p.momentumTokens : p.activeTokens
+                        const lit = idx < Math.min(activeValue, p.classId === 'monk' ? 4 : 2)
+                        return (
+                          <div
+                            key={idx}
+                            className={`w-6 h-6 rounded-full border flex items-center justify-center text-sm font-bold ${
+                              lit ? 'bg-gold-500/25 border-gold-200 text-gold-50' : 'bg-zinc-800/85 border-zinc-500/70 text-zinc-500'
+                            }`}
+                          >
+                            {lit ? 'A' : ''}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="relative mt-2 rounded-md bg-black/16 border border-white/10 px-2 py-1.5">
+                  <div className="mb-1 flex items-center justify-between">
+                    <div className="text-[10px] font-bold text-white/90">Windows</div>
+                    <div className="text-[10px] font-semibold text-white/70">{p.windows.filter(w => w.card).length}/5 filled</div>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1">
+                    {p.windows.map((w, windowIdx) => {
+                      const typeStyle = w.card ? (WINDOW_STATUS_STYLE[w.card.type] ?? 'border-gold-300/80 bg-gold-950/30') : ''
+                      const isCounterfeit = !!w.card && 'counterfeit' in w.card
+                      return (
+                        <div
+                          key={w.id}
+                          title={`Window ${windowIdx + 1}: ${w.status}${w.card ? ` - ${w.card.name}` : ''}`}
+                          onMouseEnter={(event) => {
+                            if (!w.card) return
+                            setHoveredTopWindowCard({ name: w.card.name, imageFile: w.card.imageFile, x: event.clientX, y: event.clientY })
+                          }}
+                          onMouseMove={(event) => {
+                            if (!w.card) return
+                            setHoveredTopWindowCard({ name: w.card.name, imageFile: w.card.imageFile, x: event.clientX, y: event.clientY })
+                          }}
+                          onMouseLeave={() => setHoveredTopWindowCard(null)}
+                          className={`relative h-6 rounded border flex items-center justify-center overflow-hidden text-[11px] font-display font-bold ${
+                            w.status === 'broken'
+                              ? 'border-red-400/80 bg-red-950/70 text-red-100'
+                              : w.status === 'shuttered'
+                                ? 'border-zinc-400/70 bg-zinc-800/80 text-zinc-200'
+                                : w.card
+                                  ? typeStyle
+                                  : 'border-parchment-700/35 border-dashed bg-ink-950/45 text-parchment-500'
+                          }`}
+                        >
+                          {w.card && w.status === 'normal' && (
+                            <>
+                              <span className="leading-none">{w.card.value}</span>
+                              {w.card.repTokens > 0 && (
+                                <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-white/90 shadow" title={`${w.card.repTokens} reputation`} />
+                              )}
+                              {isCounterfeit && (
+                                <span className="absolute left-0.5 bottom-0.5 rounded-sm bg-black/65 px-0.5 text-[7px] font-black leading-none text-slate-100" title="Counterfeit">CF</span>
+                              )}
+                            </>
+                          )}
+                          {!w.card && w.status === 'normal' && <span>{windowIdx + 1}</span>}
+                          {w.status === 'broken' && (
+                            <span>X</span>
+                          )}
+                          {w.status === 'shuttered' && (
+                            <span>L</span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="relative mt-2 grid grid-cols-4 gap-1.5 rounded-md bg-black/16 border border-white/10 px-2 py-1.5">
+                  {REP_STATUS_TOKENS.map(rep => (
+                    <div key={rep.key} className="flex flex-col items-center gap-0.5">
+                      <div className="w-7 h-7 rounded-full overflow-hidden border bg-ink-900" style={{ borderColor: rep.color }}>
+                        <img src={rep.image} alt={rep.key} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="text-sm font-display font-bold text-white tabular-nums leading-none">{p.rep[rep.key]}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="relative mt-1.5 grid grid-cols-4 gap-1.5 rounded-md bg-black/16 border border-white/10 px-2 py-1.5">
+                  {HOARD_STATUS_TOKENS.map(resource => {
+                    const count = p.hoard.filter(card => card.type === resource.key).length
+                    return (
+                      <div
+                        key={resource.key}
+                        title={`${resource.label} in hoard: ${count}`}
+                        className={`h-6 rounded border flex items-center justify-center gap-0.5 text-[9px] font-black leading-none ${resource.className} ${count === 0 ? 'opacity-45 grayscale' : ''}`}
+                      >
+                        <span className="text-[7px]">{resource.label}</span>
+                        <span className="text-xs tabular-nums">{count}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Legacy top bar */}
+      <div className="hidden">
         <div className="flex items-center gap-4">
           <h1 className="font-display font-bold text-gold-400 text-base tracking-wide">
             Shopkeeper Showdown
@@ -192,32 +487,9 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
         </div>
         <div className="flex items-center gap-3">
           {/* Active player selector — only shown in local/pass-and-play */}
-          {!localPlayerName && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-parchment-500">Active:</span>
-              <select
-                value={activePlayerId}
-                onChange={e => setActivePlayer(e.target.value)}
-                className="bg-ink-800 border border-parchment-700/30 rounded px-2 py-0.5 text-xs text-parchment-200"
-              >
-                {players.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
           <div className="text-parchment-300 text-xs">
             Round <span className="font-bold text-gold-300">{round}</span> / 6
           </div>
-          {!localPlayerName && (
-            <button
-              onClick={nextRound}
-              disabled={round >= 6}
-              className="btn-primary text-xs px-3 py-1.5 disabled:opacity-50"
-            >
-              Next Round
-            </button>
-          )}
           <button
             onClick={() => {
               if (isOnline) {
@@ -240,7 +512,7 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
       <SharedBoard canAct={isMyTurn} localPlayerName={localPlayerName} />
 
       {/* Lower section */}
-      <div className="flex gap-2 items-stretch">
+      <div className="flex gap-3 items-stretch">
         {/* Left column: shared decks + action log */}
         <div className="flex flex-col gap-3 flex-shrink-0" style={{ width: 320 }}>
           <div className="flex-1 min-h-52">
@@ -282,17 +554,6 @@ export function Game({ localPlayerName, roomId, onLeave }: Props) {
           </div>
         )}
 
-        {/* Right: opponent sidebar (online only) */}
-        {localPlayer && opponents.length > 0 && (
-          <OpponentSidebar
-            opponents={opponents}
-            viewingPlayerId={viewingPlayerId}
-            onSelectPlayer={setViewingPlayerId}
-            localPlayer={localPlayer}
-            localPlayerIndex={players.indexOf(localPlayer)}
-            currentTurnPlayerId={currentTurnPlayerId}
-          />
-        )}
       </div>
     </div>
   )

@@ -42,7 +42,7 @@ export function RecipeDisplay({ recipe }: { recipe: string }) {
 
 interface Props {
   card: ResourceCard
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'window' | 'lg'
   actions?: React.ReactNode
   overlay?: React.ReactNode
   dimmed?: boolean
@@ -57,7 +57,13 @@ interface Props {
 export function ResourceCardTile({ card, size = 'md', actions, overlay, dimmed, stolen, onClick, dragCardId, extraDragData }: Props) {
   const [showZoom, setShowZoom] = useState(false)
 
-  const dims = size === 'sm' ? 'w-[80px] h-[112px]' : size === 'lg' ? 'w-[140px] h-[196px]' : 'w-[100px] h-[140px]'
+  const dims = size === 'sm'
+    ? 'w-[80px] h-[112px]'
+    : size === 'window'
+      ? 'w-[120px] h-[168px]'
+      : size === 'lg'
+        ? 'w-[140px] h-[196px]'
+        : 'w-[100px] h-[140px]'
 
   return (
     <div

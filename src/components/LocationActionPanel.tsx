@@ -1890,7 +1890,7 @@ function CraftCardPicker({ player, onDone, onBack }: { player: Player; onDone: (
 // ---- Thieves' Guild ----
 
 function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string; onAction: () => void; onBack: () => void }) {
-  const { activePlayerId, players, fleaMarket, steal, heist, breakWindow, fence, launder } = useGameStore()
+  const { activePlayerId, players, steal, heist, breakWindow, fence, launder, lastGuildFenceType } = useGameStore()
   const player = players.find(p => p.id === activePlayerId) ?? players[0]
 
   const [stealBreakMode, setStealBreakMode] = useState<'steal' | 'break'>('steal')
@@ -1927,7 +1927,6 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
   const stolenHoardCards = player.hoard.filter(c => player.stolenHoardCardIds.includes(c.id) && !('counterfeit' in c))
   const stolenWindowCards = player.windows.filter(w => w.stolen && w.card && !('counterfeit' in w.card)).map(w => w.card!)
   const allStolenCards = [...stolenHoardCards, ...stolenWindowCards]
-  const topFlea = fleaMarket.find(c => c !== null)
 
   if (actionId === 'steal-or-break') {
     return (
@@ -2136,14 +2135,14 @@ function ThievesGuildActions({ actionId, onAction, onBack }: { actionId: string;
           <div className="text-xs text-parchment-600 italic">No stolen cards in hoard or windows</div>
         ) : (
           <div className="space-y-1">
-            {topFlea && (
+            {lastGuildFenceType && (
               <div className="text-[10px] text-parchment-500">
-                Top flea: {topFlea.name} ({topFlea.type}) — must pick different type
+                Last fenced type: {lastGuildFenceType} - must pick different type
               </div>
             )}
             <div className="flex flex-wrap gap-1.5">
               {allStolenCards.map(c => {
-                const blocked = !!(topFlea && c.type === topFlea.type)
+                const blocked = !!(lastGuildFenceType && c.type === lastGuildFenceType)
                 return (
                   <ResourceCardMini key={c.id} card={c} size="lg"
                     selected={fenceCardId === c.id}

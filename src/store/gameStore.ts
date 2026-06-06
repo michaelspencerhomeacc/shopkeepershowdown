@@ -195,6 +195,8 @@ function buildInitialGameState(players: Player[]): GameState {
     professionalSlots,
     workOrderDeck,
     actionLog: [logEntry(draftCards.length > 0 ? 'Starting resource snake draft began.' : 'Game started. Good luck, shopkeepers!')],
+    lastGuildFencedCard: null,
+    lastGuildFenceType: null,
     diceResult: null,
     townCrierPeek: null,
     visitorDemandRemaining,
@@ -429,6 +431,7 @@ const INITIAL: GameState = {
   professionalSlots: [],
   workOrderDeck: [],
   actionLog: [],
+  lastGuildFencedCard: null,
   lastGuildFenceType: null,
   diceResult: null,
   townCrierPeek: null,
@@ -1880,7 +1883,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   fence(playerId, cardId) {
-    const { players, fleaMarket } = get()
+    const { players, lastGuildFenceType } = get()
     const player = players.find(p => p.id === playerId)
     if (!player) return
 
@@ -1902,11 +1905,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       return
     }
 
-    // Validate: card type must differ from first non-null flea market card
-    const topFlea = fleaMarket.find(c => c !== null)
-    if (topFlea && card.type === topFlea.type) {
+    // Validate: card type must differ from the last fenced card at the guild.
+    if (lastGuildFenceType && card.type === lastGuildFenceType) {
       set(s => ({
-        actionLog: [logEntry(`${player.name} can't fence ${card.name} — same type as Flea Market top card.`, playerId), ...s.actionLog.slice(0, 49)],
+        actionLog: [logEntry(`${player.name} can't fence ${card.name} — same type as the last fenced card.`, playerId), ...s.actionLog.slice(0, 49)],
       }))
       return
     }
@@ -1928,7 +1930,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           coins: p.coins + card.value,
         }
       }),
-      resourceDiscard: [card, ...s.resourceDiscard],
+      lastGuildFencedCard: card,
       lastGuildFenceType: card.type,
       actionLog: [logEntry(`${player.name} fenced ${card.name} for ${card.value} coins.`, playerId), ...s.actionLog.slice(0, 49)],
     }))
