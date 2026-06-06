@@ -217,6 +217,14 @@ export interface GameState {
     source: string
   } | null
 
+  rogueCounterfeitEffectQueue: {
+    rogueId: string
+    cardName: string
+    cardImageFile: string
+    effect: CounterfeitReturnEffect
+    source: string
+  }[]
+
   clashResult: {
     location: Location
     rolls: { playerId: string; roll: number }[]

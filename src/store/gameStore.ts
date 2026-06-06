@@ -207,6 +207,7 @@ function buildInitialGameState(players: Player[]): GameState {
     rogueShadowsPending: null,
     rogueShadowsPromptedForTurn: null,
     rogueCounterfeitEffectPending: null,
+    rogueCounterfeitEffectQueue: [],
     clashResult: null,
     barbarianClashOptOut: null,
     classAbilitiesUsedThisTurn: [],
@@ -299,6 +300,9 @@ interface GameStore extends GameState {
   guildContacts: (rogueId: string, cardId: string, roll?: number) => void
   returnCounterfeitsToRogue: (cards: CounterfeitCard[], sourcePlayerId?: string, source?: string) => void
   clearRogueCounterfeitEffect: () => void
+  queueRogueCounterfeitEffect: (
+    effect: NonNullable<GameState['rogueCounterfeitEffectPending']>
+  ) => void
   breakWindow: (byPlayerId: string, targetPlayerId: string, windowIdx: number) => void
   fence: (playerId: string, cardId: string) => void
   launder: (playerId: string) => void
@@ -445,6 +449,8 @@ const INITIAL: GameState = {
   sellPhaseDone: false,
   rogueShadowsPending: null,
   rogueShadowsPromptedForTurn: null,
+  rogueCounterfeitEffectPending: null,
+  rogueCounterfeitEffectQueue: [],
   clashResult: null,
   barbarianClashOptOut: null,
   classAbilitiesUsedThisTurn: [],
@@ -1824,16 +1830,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
           players: s.players.map(p => p.id === rogueId ? { ...p, activeTokens: Math.min(2, p.activeTokens + effect.amount) } : p),
           actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — refreshed ${effect.amount} active token${effect.amount !== 1 ? 's' : ''}.`, rogueId), ...s.actionLog.slice(0, 49)],
         }))
-      } else if (effect.kind === 'steal' || effect.kind === 'trade' || effect.kind === 'auction' || effect.kind === 'break') {
+      } else if (
+        effect.kind === 'steal' ||
+        effect.kind === 'trade' ||
+        effect.kind === 'auction' ||
+        effect.kind === 'break'
+      ) {
+        get().queueRogueCounterfeitEffect({
+          rogueId,
+          cardName: card.name,
+          cardImageFile: card.imageFile,
+          effect,
+          source,
+        })
+
         set(s => ({
-          rogueCounterfeitEffectPending: {
-            rogueId,
-            cardName: card.name,
-            cardImageFile: card.imageFile,
-            effect,
-            source,
-          },
-          actionLog: [logEntry(`${rogue.name}'s ${card.name} returned — ${effect.kind} ${effect.amount} is ready to resolve.`, rogueId), ...s.actionLog.slice(0, 49)],
+          actionLog: [
+            logEntry(
+              `${rogue.name}'s ${card.name} returned — ${effect.kind} ${effect.amount} is queued to resolve.`,
+              rogueId
+            ),
+            ...s.actionLog.slice(0, 49),
+          ],
         }))
       } else {
         set(s => ({
@@ -1844,7 +1862,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   clearRogueCounterfeitEffect() {
-    set({ rogueCounterfeitEffectPending: null })
+    set(s => {
+      const [next, ...rest] = s.rogueCounterfeitEffectQueue
+
+      return {
+        rogueCounterfeitEffectPending: next ?? null,
+        rogueCounterfeitEffectQueue: rest,
+      }
+    })
+  },
+
+  queueRogueCounterfeitEffect(effect) {
+    set(s => {
+      if (!effect) return {}
+
+      if (!s.rogueCounterfeitEffectPending) {
+        return {
+          rogueCounterfeitEffectPending: effect,
+        }
+      }
+
+      return {
+        rogueCounterfeitEffectQueue: [
+          ...s.rogueCounterfeitEffectQueue,
+          effect,
+        ],
+      }
+    })
   },
 
   breakWindow(byPlayerId, targetPlayerId, windowIdx) {
